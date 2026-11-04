@@ -4,6 +4,8 @@
   ~/.venv/bin/python tools/ses_dinle.py 2 4        # sadece 2. ve 4. aday
   ~/.venv/bin/python tools/ses_dinle.py ahmet      # Ahmet'i şekillendirme ızgarası (A–H)
   ~/.venv/bin/python tools/ses_dinle.py ahmet C F  # ızgaradan sadece C ve F
+  ~/.venv/bin/python tools/ses_dinle.py h          # 2. tur: H etrafında ince ayar (H0–H7)
+  ~/.venv/bin/python tools/ses_dinle.py h H2 H5    # 2. turdan sadece seçtiklerin
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -39,7 +41,7 @@ ADAYLAR = [
     ("6  Piper DFKI (internetsiz)",      None, None, None, None),
 ]
 
-# Ahmet ızgarası: hız/perde/efekt eksenlerinde birer adım. Beğendiğin harfi söyle, oradan ince ayar yaparız.
+# 1. tur: Ahmet'i hız/perde/efekt eksenlerinde birer adım oynat
 IZGARA = {
     "A": ("derin + yavaş, efektsiz",          "-12%", "-15Hz", None),
     "B": ("derin + yavaş + JARVIS",           "-12%", "-15Hz", "jarvis"),
@@ -49,6 +51,18 @@ IZGARA = {
     "F": ("hızlı + esprili, efektsiz",        "+6%",  "-4Hz",  None),
     "G": ("hızlı + esprili + hafif robot",    "+6%",  "-4Hz",  "robot_hafif"),
     "H": ("genç / Peter Parker",              "+8%",  "+6Hz",  None),
+}
+
+# 2. tur: H etrafında ince ayar (H0 = referans)
+IZGARA_H = {
+    "H0": ("H, referans",                       "+8%",  "+6Hz",  None),
+    "H1": ("H, biraz daha tok (perde düşük)",   "+8%",  "+3Hz",  None),
+    "H2": ("H, daha genç (perde yüksek)",       "+8%",  "+10Hz", None),
+    "H3": ("H, daha sakin (yavaş)",             "+3%",  "+6Hz",  None),
+    "H4": ("H, daha enerjik (hızlı)",           "+13%", "+6Hz",  None),
+    "H5": ("H + hafif robot dokunuşu",          "+8%",  "+6Hz",  "robot_hafif"),
+    "H6": ("H + JARVIS parlaklığı",             "+8%",  "+6Hz",  "jarvis"),
+    "H7": ("H + hafif robot + JARVIS",          "+8%",  "+6Hz",  "jarvis_robot"),
 }
 
 
@@ -64,17 +78,18 @@ def render(path: pathlib.Path, voice: str, rate: str, pitch: str, effect: str | 
         return False
 
 
-def izgara(secim: set[str]) -> None:
+def izgara(secim: set[str], grid: dict, lines: list[int]) -> None:
     out = ROOT / "voices" / "aday" / "ahmet"
     out.mkdir(parents=True, exist_ok=True)
-    line = LINES[1]  # İngilizce kelime içeren cümle: Enki'nin gerçek konuşmasına en yakın
-    print(f"Cümle: {line}")
-    for harf, (etiket, hiz, perde, efekt) in IZGARA.items():
-        if secim and harf not in secim:
+    for kod, (etiket, hiz, perde, efekt) in grid.items():
+        if secim and kod not in secim:
             continue
-        print(f"\n▶ {harf}  {etiket}   (hız {hiz}, perde {perde}, efekt {efekt or '-'})")
-        wav = out / f"{harf}.wav"
-        if render(wav, AHMET, hiz, perde, efekt, line):
+        print(f"\n▶ {kod}  {etiket}   (hız {hiz}, perde {perde}, efekt {efekt or '-'})")
+        for n in lines:
+            wav = out / f"{kod}_{n + 1}.wav"
+            if not render(wav, AHMET, hiz, perde, efekt, LINES[n]):
+                break
+            print(f"   {LINES[n][:60]}...")
             subprocess.run(["afplay", str(wav)])
     print(f"\nDosyalar: {out}  (tekrar dinlemek için Finder'da boşluk tuşu)")
 
@@ -102,8 +117,12 @@ def adaylar(secili: set[int]) -> None:
 
 def main() -> None:
     args = sys.argv[1:]
-    if args and args[0].lower() == "ahmet":
-        izgara({a.upper() for a in args[1:]})
+    mode = args[0].lower() if args else ""
+    if mode == "ahmet":
+        izgara({a.upper() for a in args[1:]}, IZGARA, [1])
+    elif mode == "h":
+        # iki cümle: biri esprili-sakin, biri İngilizce kelimeli
+        izgara({a.upper() for a in args[1:]}, IZGARA_H, [1, 2])
     else:
         adaylar({int(a) for a in args})
 
