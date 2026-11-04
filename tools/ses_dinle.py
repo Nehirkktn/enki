@@ -12,6 +12,9 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
   ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
   ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G15), cümleyle birlikte; sonuna G13 G14 yazarsan sadece onlar
+  ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6              # voices/gulme/ içindeki GERÇEK gülme kayıtlarını Enki'ye uydur
+  ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6 perde-8      # kaydı %8 kalınlaştır (perde+8 = inceltir)
+  ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6 efektsiz     # efektsiz dene
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -406,6 +409,51 @@ def gulme(base_key: str, taban_hiz: str | None, sadece: set[str] | None = None) 
     print(f"\nDosyalar: {out}")
 
 
+def kayitli_gulmeler(base_key: str, taban_hiz: str | None, perde_orani: float, efekt_sec: str | None) -> None:
+    """voices/gulme/ klasörüne koyduğun gerçek gülme kayıtlarını (mp3/wav/m4a) Enki'nin sesine uydurur:
+    mono 24 kHz'e çevir, kenar sessizliğini kırp, ses gücünü konuşmayla eşitle, istersen perdeyi kaydır,
+    Enki'nin efektini uygula ve gülme cümlesinin önünde çal."""
+    import numpy as np
+    _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
+    hiz = taban_hiz or hiz
+    efekt = efekt_sec if efekt_sec is not None else efekt
+    kaynak = ROOT / "voices" / "gulme"
+    out = ROOT / "voices" / "aday" / "gulme_kayit"
+    kaynak.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    dosyalar = sorted(f for f in kaynak.iterdir() if f.suffix.lower() in {".mp3", ".wav", ".m4a", ".aiff", ".aac"})
+    if not dosyalar:
+        print(f"Henüz kayıt yok. Gülme seslerini şuraya koy: {kaynak}")
+        return
+    tag, cumle = next(x for x in SAHNE if x[0] == "laugh")
+    govde = out / f"cumle_{hiz}.wav"
+    if not _render_ton(govde, hiz, perde, efekt, cumle, tag):
+        return
+    g_pcm, params = _wav_oku(govde)
+    hedef_rms = float(np.sqrt(np.mean(g_pcm.astype(np.float32) ** 2))) or 3000.0
+    for i, f in enumerate(dosyalar, 1):
+        ham = out / f"ham_{i}.wav"
+        try:
+            subprocess.run(["afconvert", str(f), str(ham), "-f", "WAVE", "-d", "LEI16@24000", "-c", "1"],
+                           check=True, capture_output=True)
+        except Exception as e:
+            print(f"   {f.name}: çevrilemedi ({e})"); continue
+        pcm, _ = _wav_oku(ham)
+        pcm = _kirp(pcm, params.framerate, esik=300, pay_ms=40).astype(np.float32)
+        if perde_orani != 1.0:
+            pcm = _hizlandir(pcm, perde_orani)
+        rms = float(np.sqrt(np.mean(pcm ** 2))) or 1.0
+        pcm = np.clip(pcm * (hedef_rms / rms) * 0.9, -32000, 32000)
+        islenmis = out / f"K{i}.wav"
+        _wav_yaz(islenmis, pcm, params)
+        T.apply_effect(islenmis, efekt)
+        birlesik = out / f"K{i}_cumle.wav"
+        _birlestir([islenmis, govde], birlesik, ara_ms=80)
+        print(f"\n▶ K{i}  {f.name}")
+        subprocess.run(["afplay", str(birlesik)])
+    print(f"\nİşlenmiş dosyalar: {out}")
+
+
 MODLAR = {
     "duz":     ("DÜZ (her cümle aynı ton)", None, False),
     "duygulu": ("DUYGULU (cümle cümle ton, hafif)", DUYGU, False),
@@ -518,6 +566,15 @@ def main() -> None:
         hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
         sec = {a.upper() for a in rest if re.fullmatch(r"G\d+", a.upper())}
         gulme(base, f"{int(hz):+d}%" if hz is not None else None, sec or None)
+    elif mode == "kayit":
+        import re
+        rest = args[1:]
+        base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
+        hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
+        pd = next((m.group(1) for a in rest if (m := re.fullmatch(r"perde([+-]?\d+)", a.lower()))), None)
+        ef = "" if "efektsiz" in [a.lower() for a in rest] else None
+        kayitli_gulmeler(base, f"{int(hz):+d}%" if hz is not None else None,
+                         1.0 + int(pd) / 100 if pd is not None else 1.0, ef)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
