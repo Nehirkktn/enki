@@ -1,46 +1,64 @@
-import asyncio, base64, json
-import httpx, pytest
-from enki.tts import Audio, AzureTTS, FailoverTTS, GoogleTTS, OpenAITTS
+import asyncio, random
+import numpy as np
+
+from enki import tts
+from enki.tts import EnkiVoice, LaughPicker, Segment, contour, segments, strip_tags
 
 
-def client(handler):
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def test_segments_tags_and_laughs():
+    s = segments("[smug] Tabii. Üçüncü denemede. [laugh] Şaka şaka. [angry] [stern] Vize cuma.")
+    assert s == [
+        Segment("speech", "smug", "Tabii. Üçüncü denemede."),
+        Segment("laugh", laugh="kisa"),
+        Segment("speech", "laugh", "Şaka şaka."),
+        Segment("speech", "stern", "Vize cuma."),
+    ]
+    assert segments("[kahkaha] Tamam bu iyiydi.")[0] == Segment("laugh", laugh="uzun")
+    assert segments("[laughbig] x")[0].laugh == "uzun"  # brain'in _MD_RE'si alt çizgiyi silerse
 
 
-def test_openai_request_shape():
-    seen = {}
-    def h(req):
-        seen["url"], seen["auth"], seen["body"] = str(req.url), req.headers["authorization"], json.loads(req.content)
-        return httpx.Response(200, content=b"RIFFwav")
-    a = asyncio.run(OpenAITTS("k", http=client(h)).synth("selam"))
-    assert a == Audio(b"RIFFwav", "wav")
-    assert seen["url"].endswith("/v1/audio/speech") and seen["auth"] == "Bearer k"
-    assert seen["body"]["model"] == "gpt-4o-mini-tts" and seen["body"]["instructions"]
+def test_strip_tags():
+    assert strip_tags("[smug] Tabii.  [laugh] Şaka.") == "Tabii. Şaka."
 
 
-def test_google_decodes_base64():
-    def h(req):
-        b = json.loads(req.content)
-        assert b["voice"]["languageCode"] == "tr-TR" and req.url.params["key"] == "k"
-        return httpx.Response(200, json={"audioContent": base64.b64encode(b"PCM").decode()})
-    assert asyncio.run(GoogleTTS("k", http=client(h)).synth("x")).data == b"PCM"
+def test_contour_question_rises_statement_falls():
+    assert contour("Gerçekten mi?", 0, 1)[1] > 0
+    first, last = contour("A.", 0, 3)[1], contour("C.", 2, 3)[1]
+    assert first > last
 
 
-def test_azure_escapes_ssml():
-    def h(req):
-        assert b"&lt;b&gt; &amp;" in req.content and "westeurope" in str(req.url)
-        return httpx.Response(200, content=b"W")
-    asyncio.run(AzureTTS("k", "westeurope", http=client(h)).synth("<b> &"))
+def test_laugh_picker_no_back_to_back_repeat(tmp_path):
+    (tmp_path / "kisa").mkdir()
+    for n in ("a", "b"):
+        (tmp_path / "kisa" / f"{n}.wav").write_bytes(b"")
+    p = LaughPicker(tmp_path, random.Random(0))
+    picks = [p.pick("kisa").name for _ in range(10)]
+    assert all(a != b for a, b in zip(picks, picks[1:]))
+    assert p.pick("uzun") is None
 
 
-def test_failover_chain():
-    class Bad:
-        name = "bad"
-        async def synth(self, t): raise ConnectionError("offline")
-    class Good:
-        name = "good"
-        async def synth(self, t): return Audio(b"ok", "wav")
-    f = FailoverTTS([Bad(), Good()])
-    assert asyncio.run(f.synth("x")).data == b"ok" and f.name == "good"
-    with pytest.raises(RuntimeError):
-        asyncio.run(FailoverTTS([Bad()]).synth("x"))
+def test_render_inserts_laugh_at_speech_level(tmp_path):
+    (tmp_path / "kisa").mkdir()
+    laugh = (np.sin(np.arange(tts.SR // 2) / 5) * 20000).astype(np.int16)
+    tts.write_wav(tmp_path / "kisa" / "k.wav", laugh)
+    calls = []
+
+    async def fake_synth(text, rate, pitch, volume):
+        calls.append((text, rate, pitch, volume))
+        return (np.sin(np.arange(tts.SR // 4) / 7) * 3000).astype(np.int16)
+
+    v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None)
+    pcm = asyncio.run(v.render("[laugh] Şaka şaka. [stern] Vize cuma."))
+    assert pcm is not None and pcm.dtype == np.int16
+    assert len(pcm) > tts.SR  # 2 cümle + gülme
+    assert {c[2] for c in calls} <= {tts.BASE_PITCH + d for d in range(-5, 11)}  # kimlik sabit: sadece küçük kontur
+    assert calls[-1][3] == tts.TON["stern"][1]
+    assert abs(pcm).max() < 6000  # gülme 20000'den konuşma seviyesine indirildi
+
+
+def test_render_empty_and_missing_laugh(tmp_path):
+    async def fake_synth(*a):
+        return np.zeros(10, np.int16)
+    v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None)
+    assert asyncio.run(v.render("")) is None
+    assert asyncio.run(v.render("[laugh]")) is None  # kayıt yoksa sessizce atlar

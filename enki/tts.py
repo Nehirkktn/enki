@@ -1,275 +1,308 @@
-"""TTS port + adapters. Same shape as llm.py: one Protocol, N adapters, a failover chain.
+"""Enki'nin sesi: edge-tts Ahmet + TON tonlaması + JARVIS efekti + gerçek gülme kayıtları.
 
-Every adapter returns WAV/AIFF bytes; playback is a separate concern (Player).
-Cloud adapters use raw httpx (no vendor SDKs) -> one dependency, easy to mock.
+Beyin cevabı etiketli verir:  "[smug] Tabii ilk denemede değil. [laugh] Şaka şaka."
+- Duygu etiketi ([excited] [smug] [blush] [stern]) arkasından gelen cümlelerin tonunu belirler.
+- [laugh] kısa kıkırdama, [kahkaha] uzun gülme krizi çalar (voices/gulme/kisa, voices/gulme/uzun).
+- Bilinmeyen etiketler (ör. gözler için [angry]) sesi etkilemez; hiçbir etiket ekrana basılmaz.
+
+Ses kimliği sabit: perde duyguya göre DEĞİŞMEZ (değişince başka biri gibi duyuluyor).
+Duygu yalnızca ses gücü, duraklama ve ±3 Hz cümle içi konturla taşınır.
 """
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import os
+import pathlib
+import platform
+import random
+import re
 import shutil
 import tempfile
+import wave
 from dataclasses import dataclass
-from typing import Protocol
-from xml.sax.saxutils import escape
 
-import httpx
+import numpy as np
 
 log = logging.getLogger("enki.tts")
 
+SR = 24_000
+VOICE = os.getenv("ENKI_SES", "tr-TR-AhmetNeural")
+BASE_RATE = int(os.getenv("ENKI_SES_HIZ", "6"))      # %   (gülmenin hızı: hepsi bu hızda)
+BASE_PITCH = int(os.getenv("ENKI_SES_PERDE", "10"))  # Hz  (genç, parlak)
+EFFECT = os.getenv("ENKI_SES_EFEKT", "jarvis") or None
+GULME_DIR = pathlib.Path(os.getenv("ENKI_GULME_DIR", pathlib.Path(__file__).resolve().parents[1] / "voices" / "gulme"))
 
+# duygu: (hız farkı %, ses gücü farkı %, aynı duygudaki cümleler arası duraklama ms)
+TON: dict[str, tuple[int, int, int]] = {
+    "neutral": (0, 0, 40),
+    "excited": (+3, +15, 0),
+    "smug":    (0, -5, 60),
+    "laugh":   (0, +8, 20),
+    "blush":   (0, -12, 60),
+    "stern":   (0, +10, 70),
+}
+KONTUR_HZ = 3
+LAUGHS = {"laugh": "kisa", "kahkaha": "uzun", "laugh_big": "uzun", "laughbig": "uzun"}
+SEGMENT_GAP_MS = 120
+
+_TAG_RE = re.compile(r"\[([A-Za-z_]+)\]")
+_SENT_RE = re.compile(r"[^.!?…]+[.!?…]*")
+
+
+# ---------------------------------------------------------------- etiket ayrıştırma (saf, test edilebilir)
 @dataclass(frozen=True, slots=True)
-class Audio:
-    data: bytes
-    ext: str  # "wav" | "aiff" | "mp3"
+class Segment:
+    kind: str            # "speech" | "laugh"
+    emotion: str = "neutral"
+    text: str = ""
+    laugh: str = ""      # "kisa" | "uzun"
 
 
-class TTS(Protocol):
-    name: str
-
-    async def synth(self, text: str) -> Audio: ...
-
-
-# ---------------- cloud ----------------
-class OpenAITTS:
-    """gpt-4o-mini-tts: the only one here you can *direct* like an actor via `instructions`."""
-
-    name = "openai"
-    INSTRUCTIONS = (
-        "Türkçe konuş. Sakin, kuru ve hafif ironik bir ton; JARVIS gibi kendinden emin, "
-        "ama arada belli belirsiz gülümseyen biri. Acele etme, cümle sonlarında kısa duraklar ver."
-    )
-
-    def __init__(self, api_key: str, voice: str = "onyx", http: httpx.AsyncClient | None = None):
-        self.api_key, self.voice = api_key, voice
-        self.http = http or httpx.AsyncClient(timeout=30)
-
-    async def synth(self, text: str) -> Audio:
-        r = await self.http.post(
-            "https://api.openai.com/v1/audio/speech",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "model": "gpt-4o-mini-tts",
-                "voice": self.voice,
-                "input": text,
-                "instructions": os.getenv("ENKI_TTS_INSTRUCTIONS", self.INSTRUCTIONS),
-                "response_format": "wav",
-            },
-        )
-        r.raise_for_status()
-        return Audio(r.content, "wav")
-
-
-class GoogleTTS:
-    name = "google"
-
-    def __init__(self, api_key: str, voice: str = "tr-TR-Chirp3-HD-Charon",
-                 http: httpx.AsyncClient | None = None):
-        self.api_key, self.voice = api_key, voice
-        self.http = http or httpx.AsyncClient(timeout=30)
-
-    async def synth(self, text: str) -> Audio:
-        r = await self.http.post(
-            "https://texttospeech.googleapis.com/v1/text:synthesize",
-            params={"key": self.api_key},
-            json={
-                "input": {"text": text},
-                "voice": {"languageCode": "tr-TR", "name": self.voice},
-                "audioConfig": {"audioEncoding": "LINEAR16"},
-            },
-        )
-        r.raise_for_status()
-        return Audio(base64.b64decode(r.json()["audioContent"]), "wav")
-
-
-class AzureTTS:
-    name = "azure"
-
-    def __init__(self, key: str, region: str, voice: str = "tr-TR-AhmetNeural",
-                 http: httpx.AsyncClient | None = None):
-        self.key, self.region, self.voice = key, region, voice
-        self.http = http or httpx.AsyncClient(timeout=30)
-
-    async def synth(self, text: str) -> Audio:
-        ssml = (
-            "<speak version='1.0' xml:lang='tr-TR'>"
-            f"<voice name='{self.voice}'>{escape(text)}</voice></speak>"
-        )
-        r = await self.http.post(
-            f"https://{self.region}.tts.speech.microsoft.com/cognitiveservices/v1",
-            headers={
-                "Ocp-Apim-Subscription-Key": self.key,
-                "Content-Type": "application/ssml+xml",
-                "X-Microsoft-OutputFormat": "riff-24khz-16bit-mono-pcm",
-                "User-Agent": "enki",
-            },
-            content=ssml.encode(),
-        )
-        r.raise_for_status()
-        return Audio(r.content, "wav")
-
-
-# ---------------- local ----------------
-class PiperTTS:
-    """Offline. Runs on the Pi 5 later. CPU-bound -> executed in a worker thread."""
-
-    name = "piper"
-
-    def __init__(self, model_path: str):
-        from piper import PiperVoice  # pip install piper-tts
-
-        self.voice = PiperVoice.load(model_path)
-
-    def _synth_blocking(self, text: str) -> bytes:
-        import io
-        import wave
-
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            if hasattr(self.voice, "synthesize_wav"):  # piper-tts >= 1.3
-                self.voice.synthesize_wav(text, w)
-            else:  # older API
-                self.voice.synthesize(text, w)
-        return buf.getvalue()
-
-    async def synth(self, text: str) -> Audio:
-        return Audio(await asyncio.to_thread(self._synth_blocking, text), "wav")
-
-
-class MacSayTTS:
-    """Zero-setup baseline: macOS built-in voice. The 'boring robot' reference point."""
-
-    name = "say"
-
-    def __init__(self, voice: str = "Yelda"):
-        self.voice = voice
-
-    async def synth(self, text: str) -> Audio:
-        with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as f:
-            path = f.name
-        try:
-            p = await asyncio.create_subprocess_exec(
-                "say", "-v", self.voice, "-o", path, text,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, err = await p.communicate()
-            if p.returncode != 0:
-                raise RuntimeError(err.decode().strip() or "say failed")
-            with open(path, "rb") as fh:
-                return Audio(fh.read(), "aiff")
-        finally:
-            os.unlink(path)
-
-
-class EdgeTTS:
-    """Unofficial (Edge 'Read aloud' endpoint). Free, no key, Azure neural voices.
-    Can break or be shut off any day -> fine for auditioning, risky as Enki's only voice."""
-
-    def __init__(self, voice: str = "tr-TR-AhmetNeural", rate: str = "+0%", pitch: str = "+0Hz"):
-        import edge_tts  # pip install edge-tts
-
-        self._mod = edge_tts
-        self.voice, self.rate, self.pitch = voice, rate, pitch
-        self.name = "edge-" + voice.split("-")[2].removesuffix("Neural").lower()
-
-    async def synth(self, text: str) -> Audio:
-        c = self._mod.Communicate(text, self.voice, rate=self.rate, pitch=self.pitch)
-        data = bytearray()
-        async for chunk in c.stream():
-            if chunk["type"] == "audio":
-                data += chunk["data"]
-        if not data:
-            raise RuntimeError("edge-tts returned no audio")
-        return Audio(bytes(data), "mp3")
-
-
-# ---------------- composition ----------------
-class FailoverTTS:
-    """Cloud voice first, local voice when offline. Mirrors FailoverLLM."""
-
-    def __init__(self, chain: list[TTS]):
-        if not chain:
-            raise RuntimeError("No TTS backend configured")
-        self.chain = chain
-        self.last_used = "-"
-
-    @property
-    def name(self) -> str:
-        return self.last_used
-
-    async def synth(self, text: str) -> Audio:
-        errors = []
-        for tts in self.chain:
-            try:
-                out = await tts.synth(text)
-                self.last_used = tts.name
-                return out
-            except Exception as e:
-                log.warning("tts %s failed: %s", tts.name, e)
-                errors.append(f"{tts.name}: {e}")
-        raise RuntimeError("all TTS failed -> " + " | ".join(errors))
-
-
-def available_backends() -> dict[str, TTS]:
-    """Everything configured on this machine, keyed by name. Missing creds = silently skipped."""
-    out: dict[str, TTS] = {}
-    if k := os.getenv("OPENAI_API_KEY"):
-        out["openai"] = OpenAITTS(k, os.getenv("ENKI_OPENAI_VOICE", "onyx"))
-    if k := os.getenv("GOOGLE_TTS_API_KEY"):
-        out["google"] = GoogleTTS(k, os.getenv("ENKI_GOOGLE_VOICE", "tr-TR-Chirp3-HD-Charon"))
-    if (k := os.getenv("AZURE_SPEECH_KEY")) and (reg := os.getenv("AZURE_SPEECH_REGION")):
-        out["azure"] = AzureTTS(k, reg, os.getenv("ENKI_AZURE_VOICE", "tr-TR-AhmetNeural"))
-    if (m := os.getenv("ENKI_PIPER_MODEL")) and os.path.exists(m):
-        try:
-            out["piper"] = PiperTTS(m)
-        except ImportError:
-            log.warning("ENKI_PIPER_MODEL set but piper-tts not installed")
-    try:
-        rate, pitch = os.getenv("ENKI_EDGE_RATE", "+0%"), os.getenv("ENKI_EDGE_PITCH", "+0Hz")
-        for v in ("tr-TR-AhmetNeural", "tr-TR-EmelNeural"):
-            e = EdgeTTS(v, rate, pitch)
-            out[e.name] = e
-    except ImportError:
-        pass
-    if os.getenv("ENKI_SAY_VOICE") and shutil.which("say"):
-        out["say"] = MacSayTTS(os.getenv("ENKI_SAY_VOICE", "Yelda"))
+def segments(text: str) -> list[Segment]:
+    out: list[Segment] = []
+    emotion = "neutral"
+    parts = _TAG_RE.split(text)  # [metin, etiket, metin, etiket, ...]
+    for i, part in enumerate(parts):
+        if i % 2:  # etiket
+            tag = part.lower()
+            if tag in LAUGHS:
+                out.append(Segment("laugh", laugh=LAUGHS[tag]))
+                emotion = "laugh"
+            elif tag in TON:
+                emotion = tag
+            continue
+        part = " ".join(part.split())
+        if part:
+            out.append(Segment("speech", emotion, part))
     return out
 
 
-def build_tts(order: str | None = None) -> FailoverTTS:
-    """ENKI_TTS='openai,piper' -> try openai, fall back to piper."""
-    backends = available_backends()
-    order = order or os.getenv("ENKI_TTS", "openai,google,azure,piper")
-    chain = [backends[n] for n in (s.strip() for s in order.split(",")) if n in backends]
-    return FailoverTTS(chain)
+def strip_tags(text: str) -> str:
+    return " ".join(_TAG_RE.sub(" ", text).split())
 
 
-# ---------------- playback ----------------
-async def play(audio: Audio) -> None:
+def sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENT_RE.findall(text) if s.strip()] or [text]
+
+
+def contour(sentence: str, i: int, n: int) -> tuple[int, int]:
+    """(hız farkı, perde farkı): düz cümlede ses baştan sona hafif iner, soru sonunda kalkar, ünlemde hızlanır."""
+    dp = round(KONTUR_HZ - 2 * KONTUR_HZ * i / (n - 1)) if n > 1 else 0
+    dr = 0
+    if sentence.endswith("?"):
+        dp += KONTUR_HZ + 2
+    if sentence.endswith("!"):
+        dr += 5
+    return dr, dp
+
+
+class LaughPicker:
+    """Klasördeki kayıtlardan rastgele seçer; aynı kaydı üst üste çalmaz (birden fazla varsa)."""
+
+    def __init__(self, root: pathlib.Path = GULME_DIR, rng: random.Random | None = None):
+        self.root, self.rng, self.last = root, rng or random.Random(), {}
+
+    def pick(self, kind: str) -> pathlib.Path | None:
+        files = sorted((self.root / kind).glob("*.wav"))
+        if not files:
+            return None
+        choices = [f for f in files if f != self.last.get(kind)] or files
+        self.last[kind] = f = self.rng.choice(choices)
+        return f
+
+
+# ---------------------------------------------------------------- DSP (int16 PCM, 24 kHz mono)
+def trim(pcm: np.ndarray, threshold: int = 400, pad_ms: int = 12) -> np.ndarray:
+    loud = np.flatnonzero(np.abs(pcm) > threshold)
+    if not len(loud):
+        return pcm
+    pad = int(SR * pad_ms / 1000)
+    return pcm[max(0, loud[0] - pad): loud[-1] + pad]
+
+
+def fade(x: np.ndarray, ms: int = 10) -> np.ndarray:
+    n = int(SR * ms / 1000)
+    x = x.astype(np.float32)
+    if len(x) > 2 * n:
+        ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+        x[:n] *= ramp
+        x[-n:] *= ramp[::-1]
+    return x
+
+
+def rms(x: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(np.square(x.astype(np.float32))))) if len(x) else 0.0
+
+
+def _one_pole(x: np.ndarray, a: float) -> np.ndarray:
+    y = np.empty_like(x)
+    acc, b = 0.0, 1.0 - a
+    for i, v in enumerate(x):
+        acc = b * v + a * acc
+        y[i] = acc
+    return y
+
+
+def _chorus(x, base_ms, depth_ms, lfo_hz, mix):
+    n = np.arange(len(x), dtype=np.float32)
+    d = (base_ms + depth_ms * np.sin(2 * np.pi * lfo_hz * n / SR)) * SR / 1000
+    return (1 - mix) * x + mix * np.interp(n - d, n, x, left=0.0)
+
+
+def _reflections(x, taps_ms, decay):
+    y = x.copy()
+    for k, ms in enumerate(taps_ms, 1):
+        d = int(SR * ms / 1000)
+        if d < len(x):
+            y[d:] += (decay ** k) * x[:-d]
+    return y
+
+
+def jarvis(pcm: np.ndarray) -> np.ndarray:
+    """'Duvarlardaki yapay zekâ' parlaklığı: presence + hafif chorus + küçük oda (robot_vision_v2 ile aynı)."""
+    x = pcm.astype(np.float32) / 32768.0
+    x = x + 0.35 * (x - _one_pole(x, 0.92))
+    x = _chorus(x, 12, 1.5, 0.6, 0.22)
+    x = _reflections(x, (23, 41, 67, 97), 0.38)
+    x /= max(1.0, float(np.abs(x).max()) / 0.95)
+    return (x * 32767).astype(np.int16)
+
+
+EFFECTS = {"jarvis": jarvis}
+
+
+def apply_effect(pcm: np.ndarray, effect: str | None = EFFECT) -> np.ndarray:
+    return EFFECTS[effect](pcm) if effect in EFFECTS else pcm.astype(np.int16)
+
+
+def read_wav(path: pathlib.Path) -> np.ndarray:
+    with wave.open(str(path), "rb") as r:
+        pcm = np.frombuffer(r.readframes(r.getnframes()), np.int16)
+        sr, ch = r.getframerate(), r.getnchannels()
+    if ch == 2:
+        pcm = pcm.reshape(-1, 2).mean(axis=1)
+    if sr != SR:
+        pcm = np.interp(np.linspace(0, len(pcm) - 1, int(len(pcm) * SR / sr)), np.arange(len(pcm)), pcm)
+    return pcm.astype(np.int16)
+
+
+def write_wav(path: pathlib.Path, pcm: np.ndarray) -> None:
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(np.clip(pcm, -32767, 32767).astype(np.int16).tobytes())
+
+
+# ---------------------------------------------------------------- render
+async def _run(*cmd: str) -> None:
+    p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+    _, err = await p.communicate()
+    if p.returncode:
+        raise RuntimeError(f"{cmd[0]}: {err.decode(errors='ignore').strip()}")
+
+
+async def edge_pcm(text: str, rate: int, pitch: int, volume: int) -> np.ndarray:
+    """Tek cümle -> int16 PCM. edge-tts mp3 verir; macOS'ta afconvert, diğerinde ffmpeg ile çözülür."""
+    import edge_tts  # pip install edge-tts
+
+    data = bytearray()
+    c = edge_tts.Communicate(text, VOICE, rate=f"{rate:+d}%", pitch=f"{pitch:+d}Hz", volume=f"{volume:+d}%")
+    async for chunk in c.stream():
+        if chunk["type"] == "audio":
+            data += chunk["data"]
+    if not data:
+        raise RuntimeError("edge-tts ses döndürmedi")
+    with tempfile.TemporaryDirectory() as td:
+        mp3, wav = pathlib.Path(td) / "a.mp3", pathlib.Path(td) / "a.wav"
+        mp3.write_bytes(data)
+        if platform.system() == "Darwin":
+            await _run("afconvert", str(mp3), str(wav), "-f", "WAVE", "-d", f"LEI16@{SR}", "-c", "1")
+        elif shutil.which("ffmpeg"):
+            await _run("ffmpeg", "-y", "-loglevel", "error", "-i", str(mp3), "-ac", "1", "-ar", str(SR), str(wav))
+        else:
+            raise RuntimeError("mp3 çözmek için afconvert/ffmpeg gerekli")
+        return read_wav(wav)
+
+
+class EnkiVoice:
+    """Cevabı parçalara ayırır, konuşma parçalarını paralel üretir, gülmeleri araya koyar, tek dosya çalar."""
+
+    def __init__(self, synth=edge_pcm, laughs: LaughPicker | None = None, effect: str | None = EFFECT):
+        self.synth, self.laughs, self.effect = synth, laughs or LaughPicker(), effect
+
+    async def _speech(self, seg: Segment) -> np.ndarray:
+        dr0, dv, gap = TON.get(seg.emotion, TON["neutral"])
+        parts = sentences(seg.text)
+        rendered = await asyncio.gather(*(
+            self.synth(s, BASE_RATE + dr0 + dr, BASE_PITCH + dp, dv)
+            for i, s in enumerate(parts) for dr, dp in [contour(s, i, len(parts))]
+        ))
+        silence = np.zeros(int(SR * gap / 1000), np.float32)
+        out: list[np.ndarray] = []
+        for k, pcm in enumerate(rendered):
+            out.append(fade(trim(pcm)))
+            if k < len(rendered) - 1:
+                out.append(silence)
+        return np.concatenate(out)
+
+    def _laugh(self, kind: str, target_rms: float) -> np.ndarray | None:
+        f = self.laughs.pick(kind)
+        if f is None:
+            log.warning("gülme kaydı yok: %s/%s", self.laughs.root, kind)
+            return None
+        x = trim(read_wav(f), threshold=300, pad_ms=30).astype(np.float32)
+        return fade(x * (target_rms / (rms(x) or 1.0)) * 0.9)
+
+    async def render(self, text: str) -> np.ndarray | None:
+        segs = segments(text)
+        if not segs:
+            return None
+        speech = await asyncio.gather(*(self._speech(s) for s in segs if s.kind == "speech"))
+        it = iter(speech)
+        audio: list[np.ndarray | None] = [next(it) if s.kind == "speech" else None for s in segs]
+        levels = [rms(a) for a in audio if a is not None]
+        level = float(np.median(levels)) if levels else 3000.0
+        for i, s in enumerate(segs):
+            if s.kind == "laugh":
+                audio[i] = self._laugh(s.laugh, level)
+        pieces = [a for a in audio if a is not None and len(a)]
+        if not pieces:
+            return None
+        gap = np.zeros(int(SR * SEGMENT_GAP_MS / 1000), np.float32)
+        joined = np.concatenate([p for a in pieces for p in (a, gap)][:-1])
+        return apply_effect(np.clip(joined, -32767, 32767), self.effect)
+
+    async def speak(self, text: str) -> None:
+        pcm = await self.render(text)
+        if pcm is not None:
+            await play(pcm)
+
+
+async def play(pcm: np.ndarray) -> None:
     player = shutil.which("afplay") or shutil.which("aplay")  # macOS | Linux/Pi
     if not player:
-        raise RuntimeError("no audio player (afplay/aplay) found")
-    with tempfile.NamedTemporaryFile(suffix=f".{audio.ext}", delete=False) as f:
-        f.write(audio.data)
-        path = f.name
+        raise RuntimeError("ses çalıcı (afplay/aplay) yok")
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        path = pathlib.Path(f.name)
     try:
-        p = await asyncio.create_subprocess_exec(player, path)
+        write_wav(path, pcm)
+        p = await asyncio.create_subprocess_exec(player, str(path))
         await p.wait()
     finally:
-        os.unlink(path)
+        path.unlink(missing_ok=True)
 
 
 class VoiceSpeaker:
-    """Brain's Speaker port: print + speak. Text still prints so the console stays usable."""
+    """Beynin Speaker portu: etiketsiz metni yazdırır, etiketli metni seslendirir."""
 
-    def __init__(self, tts: TTS, printer):
-        self.tts, self.printer = tts, printer
+    def __init__(self, voice: EnkiVoice, printer):
+        self.voice, self.printer = voice, printer
 
     async def say(self, text: str) -> None:
-        await self.printer.say(text)
+        await self.printer.say(strip_tags(text))
         try:
-            await play(await self.tts.synth(text))
+            await self.voice.speak(text)
         except Exception as e:
-            log.warning("voice failed, text only: %s", e)
+            log.warning("ses üretilemedi, sadece yazı: %s", e)

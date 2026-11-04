@@ -1,7 +1,7 @@
-"""Text-mode harness. Mic/STT/TTS adapters will replace stdin/print without touching Brain.
+"""Enki konsolu. Varsayılan: yazarak konuşursun, Enki hem yazar hem sesli cevap verir.
 
-  python -m enki            # konuş
-  ENKI_TTS=openai,piper python -m enki   # sesli
+  enki                      # sesli (Ahmet + TON + JARVIS + gülme kayıtları)
+  enki --sessiz             # sadece yazı (ya da ENKI_SESSIZ=1)
   /kendi <metin>            # kendi kendine konuşma simülasyonu (Overheard)
   /yuz                      # kamera seni gördü (FaceSeen)
   /hafiza                   # Enki ne biliyor
@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
@@ -19,6 +20,7 @@ from .config import Config
 from .fsm import Q
 from .llm import build_llm
 from .memory import Memory
+from .tts import strip_tags
 
 DIM, CYAN, YELLOW, RESET = "\033[2m", "\033[36m", "\033[33m", "\033[0m"
 
@@ -32,7 +34,7 @@ class ConsoleSpeaker:
     async def say(self, text: str) -> None:
         name = self.brain_name()
         tag = f" {DIM if name == 'claude' else YELLOW}[{name}]{RESET}{CYAN}" if name else ""
-        print(f"\r{CYAN}Enki{tag} ›{RESET} {text}\n{DIM}sen ›{RESET} ", end="", flush=True)
+        print(f"\r{CYAN}Enki{tag} ›{RESET} {strip_tags(text)}\n{DIM}sen ›{RESET} ", end="", flush=True)
 
 
 async def stdin_loop(brain: Brain, mem: Memory) -> None:
@@ -59,17 +61,26 @@ async def stdin_loop(brain: Brain, mem: Memory) -> None:
             brain.post(UserSaid(line))
 
 
-async def amain() -> None:
+def build_speaker(llm, silent: bool):
+    console = ConsoleSpeaker(lambda: llm.name)
+    if silent:
+        return console
+    try:
+        import edge_tts  # noqa: F401
+    except ImportError:
+        print(f"{YELLOW}ses kapalı: edge-tts kurulu değil (pip install edge-tts){RESET}")
+        return console
+    from .tts import EnkiVoice, VoiceSpeaker
+
+    return VoiceSpeaker(EnkiVoice(), console)
+
+
+async def amain(silent: bool) -> None:
     logging.basicConfig(level=os.getenv("ENKI_LOG", "WARNING"), format="%(name)s: %(message)s")
     cfg = Config()
     mem = Memory(cfg)
     llm = build_llm(cfg)
-    speaker = ConsoleSpeaker(lambda: llm.name)
-    if os.getenv("ENKI_TTS"):  # e.g. ENKI_TTS=openai,piper  -> speak out loud
-        from .tts import VoiceSpeaker, build_tts
-
-        speaker = VoiceSpeaker(build_tts(), ConsoleSpeaker(lambda: llm.name))
-    brain = Brain(cfg, llm, mem, speaker)
+    brain = Brain(cfg, llm, mem, build_speaker(llm, silent))
 
     if os.getenv("ENKI_DEBUG_FSM"):
         brain.fsm.subscribe(lambda a, s, b: print(f"{DIM}[{a.name} --{s.name}--> {b.name}]{RESET}"))
@@ -86,8 +97,11 @@ async def amain() -> None:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(prog="enki")
+    ap.add_argument("--sessiz", action="store_true", help="sadece yazı, ses yok")
+    args = ap.parse_args()
     try:
-        asyncio.run(amain())
+        asyncio.run(amain(args.sessiz or bool(os.getenv("ENKI_SESSIZ"))))
     except KeyboardInterrupt:
         pass
 
