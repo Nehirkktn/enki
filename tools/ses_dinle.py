@@ -116,13 +116,13 @@ DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
 
 # TON: aynı kişi, sadece tonlama. Perde SABİT (perde değişince ses başka biri gibi geliyor).
 # (hız farkı %, ses yüksekliği farkı %, parçalar arası duraklama ms)
-TON = {
-    "neutral": (0,   0,   90),
-    "excited": (+12, +15, 40),    # hızlı, yüksek, nefes almadan
-    "smug":    (-10, -5,  230),   # yavaş, kısık, dramatik duraklamalar
-    "laugh":   (+8,  +5,  60),
-    "blush":   (-6,  -12, 160),   # utangaç: yavaş, kısık
-    "stern":   (-15, +10, 260),   # sert: yavaş, net, uzun duraklama
+TON = {  # duraklama = parçaların kenar sessizliği kırpıldıktan SONRA eklenen boşluk
+    "neutral": (0,   0,   60),
+    "excited": (+12, +15, 15),    # hızlı, yüksek, nefes almadan
+    "smug":    (-10, -5,  130),   # yavaş, kısık, kısa dramatik duraklama
+    "laugh":   (+8,  +5,  30),
+    "blush":   (-6,  -12, 90),    # utangaç: yavaş, kısık
+    "stern":   (-15, +10, 160),   # sert: yavaş, net
 }
 KONTUR_HZ = 3  # cümle içi iniş-çıkış: ±3 Hz (kimliği değiştirmeyecek kadar küçük)
 
@@ -158,18 +158,38 @@ def _kontur(parca: str, i: int, n: int) -> tuple[int, int]:
     return dr, dp
 
 
-def _birlestir(parcalar: list[pathlib.Path], hedef: pathlib.Path, ara_ms: int = 70) -> None:
+def _kirp(pcm, sr: int, esik: int = 400, pay_ms: int = 25):
+    """Baştaki/sondaki sessizliği at; konuşmanın kenarında küçük bir pay bırak."""
+    import numpy as np
+    yuksek = np.flatnonzero(np.abs(pcm) > esik)
+    if not len(yuksek):
+        return pcm
+    pay = int(sr * pay_ms / 1000)
+    return pcm[max(0, yuksek[0] - pay): yuksek[-1] + pay]
+
+
+def _birlestir(parcalar: list[pathlib.Path], hedef: pathlib.Path, ara_ms: int = 60, fade_ms: int = 10) -> None:
     import wave
+    import numpy as np
     with wave.open(str(parcalar[0]), "rb") as r:
         params = r.getparams()
-    sessizlik = b"\x00\x00" * params.nchannels * int(params.framerate * ara_ms / 1000)
+    sr = params.framerate
+    fade = int(sr * fade_ms / 1000)
+    ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    out = []
+    for k, p in enumerate(parcalar):
+        with wave.open(str(p), "rb") as r:
+            pcm = np.frombuffer(r.readframes(r.getnframes()), np.int16)
+        pcm = _kirp(pcm, sr).astype(np.float32)
+        if len(pcm) > 2 * fade:  # 10 ms yumuşak giriş/çıkış: geçişte çıtırtı olmasın
+            pcm[:fade] *= ramp
+            pcm[-fade:] *= ramp[::-1]
+        out.append(pcm)
+        if k < len(parcalar) - 1:
+            out.append(np.zeros(int(sr * ara_ms / 1000), np.float32))
     with wave.open(str(hedef), "wb") as w:
         w.setparams(params)
-        for k, p in enumerate(parcalar):
-            with wave.open(str(p), "rb") as r:
-                w.writeframes(r.readframes(r.getnframes()))
-            if k < len(parcalar) - 1:
-                w.writeframes(sessizlik)
+        w.writeframes(np.concatenate(out).astype(np.int16).tobytes())
 
 
 def _render_vol(path: pathlib.Path, rate: str, pitch: str, volume: str, line: str) -> bool:
@@ -242,7 +262,7 @@ def duygu(base_key: str, modlar: list[str]) -> None:
         baslik, tablo, kontur = MODLAR[mod]
         print(f"\n▶ {baslik}   taban: {base_key}")
         for i, (tag, line) in enumerate(SAHNE, 1):
-            wav = out / f"{mod}_{i}.wav"
+            wav = out / f"{mod}{'2' if kontur == 'ton' else ''}_{i}.wav"
             if kontur == "ton":
                 ok = _render_ton(wav, hiz, perde, efekt, line, tag)
             else:
