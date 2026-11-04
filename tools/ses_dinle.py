@@ -117,12 +117,12 @@ DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
 # TON: aynı kişi, sadece tonlama. Perde SABİT (perde değişince ses başka biri gibi geliyor).
 # (hız farkı %, ses yüksekliği farkı %, parçalar arası duraklama ms)
 TON = {  # duraklama = parçaların kenar sessizliği kırpıldıktan SONRA eklenen boşluk
-    "neutral": (0,   0,   60),
-    "excited": (+12, +15, 15),    # hızlı, yüksek, nefes almadan
-    "smug":    (-10, -5,  130),   # yavaş, kısık, kısa dramatik duraklama
-    "laugh":   (+8,  +5,  30),
-    "blush":   (-6,  -12, 90),    # utangaç: yavaş, kısık
-    "stern":   (-15, +10, 160),   # sert: yavaş, net
+    "neutral": (0,   0,   40),
+    "excited": (+12, +15, 0),     # hızlı, yüksek, nefes almadan
+    "smug":    (-10, -5,  90),    # yavaş, kısık, kısa dramatik duraklama
+    "laugh":   (+8,  +5,  20),
+    "blush":   (-6,  -12, 60),    # utangaç: yavaş, kısık
+    "stern":   (-15, +10, 110),   # sert: yavaş, net
 }
 KONTUR_HZ = 3  # cümle içi iniş-çıkış: ±3 Hz (kimliği değiştirmeyecek kadar küçük)
 
@@ -143,7 +143,9 @@ def _shift(base: str, delta: int, unit: str) -> str:
 def _parcala(line: str) -> list[str]:
     """Cümleyi noktalama sınırlarından parçalar (noktalama parçada kalır)."""
     import re
-    return [p.strip() for p in re.findall(r"[^,.!?…;]+[,.!?…;]*", line) if p.strip()]
+    # Sadece cümle sonlarından böl: virgüldeki doğal kısa duruşu Ahmet zaten kendisi yapıyor,
+    # her virgülde parçalamak gereksiz dikiş ve duraklama yaratıyordu.
+    return [p.strip() for p in re.findall(r"[^.!?…]+[.!?…]*", line) if p.strip()]
 
 
 def _kontur(parca: str, i: int, n: int) -> tuple[int, int]:
@@ -158,7 +160,7 @@ def _kontur(parca: str, i: int, n: int) -> tuple[int, int]:
     return dr, dp
 
 
-def _kirp(pcm, sr: int, esik: int = 400, pay_ms: int = 25):
+def _kirp(pcm, sr: int, esik: int = 400, pay_ms: int = 12):
     """Baştaki/sondaki sessizliği at; konuşmanın kenarında küçük bir pay bırak."""
     import numpy as np
     yuksek = np.flatnonzero(np.abs(pcm) > esik)
@@ -262,7 +264,7 @@ def duygu(base_key: str, modlar: list[str]) -> None:
         baslik, tablo, kontur = MODLAR[mod]
         print(f"\n▶ {baslik}   taban: {base_key}")
         for i, (tag, line) in enumerate(SAHNE, 1):
-            wav = out / f"{mod}{'2' if kontur == 'ton' else ''}_{i}.wav"
+            wav = out / f"{mod}{'3' if kontur == 'ton' else ''}_{i}.wav"
             if kontur == "ton":
                 ok = _render_ton(wav, hiz, perde, efekt, line, tag)
             else:
