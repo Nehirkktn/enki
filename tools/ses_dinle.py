@@ -15,6 +15,7 @@
   ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6              # voices/gulme/ içindeki GERÇEK gülme kayıtlarını Enki'ye uydur
   ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6 perde-8      # kaydı %8 kalınlaştır (perde+8 = inceltir)
   ~/.venv/bin/python tools/ses_dinle.py kayit X1 hiz+6 efektsiz     # efektsiz dene
+  ~/.venv/bin/python tools/ses_dinle.py gulme_sahne X1 hiz+6        # duruma göre gülme: laf arasında kısa, komik anda uzun
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -454,6 +455,74 @@ def kayitli_gulmeler(base_key: str, taban_hiz: str | None, perde_orani: float, e
     print(f"\nİşlenmiş dosyalar: {out}")
 
 
+def _uydur(kaynak: pathlib.Path, hedef: pathlib.Path, params, hedef_rms: float,
+           perde_orani: float = 1.0, efekt: str | None = None) -> pathlib.Path:
+    """Bir gülme kaydını Enki'ye uydur: 24 kHz mono, kırp, ses gücünü eşitle, perde, efekt."""
+    import numpy as np
+    ham = hedef.with_name(hedef.stem + "_ham.wav")
+    subprocess.run(["afconvert", str(kaynak), str(ham), "-f", "WAVE", "-d", "LEI16@24000", "-c", "1"],
+                   check=True, capture_output=True)
+    pcm, _ = _wav_oku(ham)
+    pcm = _kirp(pcm, params.framerate, esik=300, pay_ms=30).astype(np.float32)
+    if perde_orani != 1.0:
+        pcm = _hizlandir(pcm, perde_orani)
+    rms = float(np.sqrt(np.mean(pcm ** 2))) or 1.0
+    _wav_yaz(hedef, np.clip(pcm * (hedef_rms / rms) * 0.9, -32000, 32000), params)
+    ham.unlink()
+    T.apply_effect(hedef, efekt)
+    return hedef
+
+
+# Duruma göre gülme: laf arasında kısa kıkırdama, gerçekten komik bir şeyde gülme krizi.
+# Beyin cevabın başına [laugh] (kısa) ya da [laugh_big] (uzun) koyar; kısa olanlar rastgele seçilir ki tekrar etmesin.
+GULME_SAHNE = [
+    ("laugh",     "Yine mi aynı bug? Bu artık evcil hayvanın oldu."),
+    ("neutral",   "Neyse, düzeltiriz. Index'e bak."),
+    ("laugh",     "Commit mesajına asdf yazmışsın. Sanatçı ruhlu."),
+    ("laugh_big", "Tamam, bu çok iyiydi. Kabul ediyorum, bu turu sen aldın."),
+]
+
+
+def gulme_sahne(base_key: str, taban_hiz: str | None, perde_orani: float) -> None:
+    import random
+    import numpy as np
+    _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
+    hiz = taban_hiz or hiz
+    kok = ROOT / "voices" / "gulme"
+    kisalar = sorted((kok / "kisa").glob("*.wav"))
+    uzunlar = sorted((kok / "uzun").glob("*.wav"))
+    if not kisalar or not uzunlar:
+        print(f"voices/gulme/kisa ve voices/gulme/uzun klasörlerinde kayıt olmalı"); return
+    out = ROOT / "voices" / "aday" / "gulme_sahne"
+    out.mkdir(parents=True, exist_ok=True)
+    print("hazırlanıyor...", flush=True)
+    parcalar, rng = [], random.Random()
+    son_kisa = None
+    for i, (tag, line) in enumerate(GULME_SAHNE, 1):
+        govde = out / f"cumle_{hiz}_{i}.wav"
+        if not _render_ton(govde, hiz, perde, efekt, line, "laugh" if tag.startswith("laugh") else tag):
+            return
+        g_pcm, params = _wav_oku(govde)
+        rms = float(np.sqrt(np.mean(g_pcm.astype(np.float32) ** 2))) or 3000.0
+        if tag == "laugh":
+            secenek = [k for k in kisalar if k != son_kisa] or kisalar
+            son_kisa = kaynak = rng.choice(secenek)
+        elif tag == "laugh_big":
+            kaynak = rng.choice(uzunlar)
+        else:
+            kaynak = None
+        if kaynak:
+            g = _uydur(kaynak, out / f"gulme_{i}.wav", params, rms, perde_orani, efekt)
+            parcalar += [g]
+            print(f"   ({'kısa' if tag == 'laugh' else 'UZUN'} gülme: {kaynak.name})")
+        parcalar.append(govde)
+        print(f"   [{tag:9}] {line}")
+    sahne = out / "sahne.wav"
+    _birlestir(parcalar, sahne, ara_ms=150)
+    subprocess.run(["afplay", str(sahne)])
+    print(f"\nDosya: {sahne}   (her çalıştırmada kısa gülmeler rastgele değişir)")
+
+
 MODLAR = {
     "duz":     ("DÜZ (her cümle aynı ton)", None, False),
     "duygulu": ("DUYGULU (cümle cümle ton, hafif)", DUYGU, False),
@@ -566,6 +635,13 @@ def main() -> None:
         hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
         sec = {a.upper() for a in rest if re.fullmatch(r"G\d+", a.upper())}
         gulme(base, f"{int(hz):+d}%" if hz is not None else None, sec or None)
+    elif mode == "gulme_sahne":
+        import re
+        rest = args[1:]
+        base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
+        hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
+        pd = next((m.group(1) for a in rest if (m := re.fullmatch(r"perde([+-]?\d+)", a.lower()))), None)
+        gulme_sahne(base, f"{int(hz):+d}%" if hz is not None else None, 1.0 + int(pd) / 100 if pd is not None else 1.0)
     elif mode == "kayit":
         import re
         rest = args[1:]
