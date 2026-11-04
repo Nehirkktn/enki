@@ -11,7 +11,7 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
   ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
-  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G9), cümleyle birlikte; sonuna G7 G8 yazarsan sadece onlar
+  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G12), cümleyle birlikte; sonuna G10 G11 yazarsan sadece onlar
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -314,7 +314,9 @@ def _nefes(sr: int, ms: int = 260, seviye: float = 900.0):
 
 
 def _uzun_kikirdama(out: pathlib.Path, hiz: str, perde: str, ad: str, hece_metni: str,
-                    adim: int, hece_ms: int, ara_ms: int, efekt: str) -> pathlib.Path | None:
+                    adim: int, hece_ms: int, ara_ms: int, efekt: str,
+                    sonum: float = 0.55, perde_dusus: float = 0.22, yavaslama: float = 0.6,
+                    ara_nefes: bool = False, oynaklik: float = 0.03) -> pathlib.Path | None:
     """Daha uzun, insansı kıkırdama: hece sayısı, ritim düzensizliği, sönümlenme ve sonda nefes."""
     import numpy as np
     hece = out / f"hece_{hece_metni.strip('.').lower()}.wav"
@@ -329,12 +331,20 @@ def _uzun_kikirdama(out: pathlib.Path, hiz: str, perde: str, ad: str, hece_metni
     parca = []
     for k in range(adim):
         t = k / max(adim - 1, 1)
-        oran = 1.10 - 0.22 * t + rng.uniform(-0.03, 0.03)   # ilk heceler tiz, sona doğru alçalır
-        kazanc = 1.0 - 0.55 * t                              # sönümlenme
-        parca.append(_hizlandir(pcm, oran) * kazanc)
-        bosluk = ara_ms * (1 + 0.6 * t) * rng.uniform(0.85, 1.15)  # ritim sona doğru yavaşlar
+        oran = 1.05 - perde_dusus * t + rng.uniform(-oynaklik, oynaklik)   # her hece biraz farklı
+        kazanc = (1.0 - sonum * t) * rng.uniform(0.88, 1.0)
+        hece_k = _hizlandir(pcm, oran) * kazanc
+        if oynaklik > 0.03:  # hece uzunluğu da oynasın: insan her "ha"yı aynı uzunlukta söylemez
+            hece_k = hece_k[: int(len(hece_k) * rng.uniform(0.8, 1.0))]
+            f = min(int(sr * 0.02), len(hece_k) // 4)
+            hece_k[-f:] *= np.linspace(1, 0, f)
+        parca.append(hece_k)
+        bosluk = ara_ms * (1 + yavaslama * t) * rng.uniform(0.8, 1.2)
+        if ara_nefes and k in (1, adim - 2):  # arada kısa nefes alış: gülerken hava çekmek
+            parca.append(np.zeros(int(sr * 0.03), np.float32))
+            parca.append(_nefes(sr, ms=120, seviye=500.0))
         parca.append(np.zeros(int(sr * bosluk / 1000), np.float32))
-    parca.append(_nefes(sr))
+    parca.append(_nefes(sr, ms=180, seviye=700.0))
     son = out / f"{ad}.wav"
     _wav_yaz(son, np.concatenate(parca), params)
     T.apply_effect(son, efekt)
@@ -364,8 +374,14 @@ def gulme(base_key: str, taban_hiz: str | None, sadece: set[str] | None = None) 
         ("G8", "hızlı 'he' kıkırdaması: 6 hece, sonda nefes (~1.5 sn)",       "He.", 6, 170, 80,  "jarvis"),
         ("G9", "G7 + hafif robot",                                           "Ha.", 5, 240, 120, "robot_hafif"),
     ]
-    for kod, etiket, hece_metni, adim, hms, ams, ef in uzunlar:
-        w = _uzun_kikirdama(out, hiz, perde, kod, hece_metni, adim, hms, ams, ef)
+    sonmeyen = dict(sonum=0.1, perde_dusus=0.06, yavaslama=0.15, oynaklik=0.06)
+    uzunlar += [  # sönme yok: ses gücü ve perde sabit kalıyor, her hece biraz farklı
+        ("G10", "G7 sönmeden, daha doğal oynaklık",            "Ha.", 5, 240, 115, "jarvis", sonmeyen),
+        ("G11", "G8 sönmeden ('he-he' kıkırdama)",             "He.", 6, 170, 85,  "jarvis", sonmeyen),
+        ("G12", "G10 + arada kısa nefes alışlar",              "Ha.", 5, 240, 115, "jarvis", {**sonmeyen, "ara_nefes": True}),
+    ]
+    for kod, etiket, hece_metni, adim, hms, ams, ef, *ek in uzunlar:
+        w = _uzun_kikirdama(out, hiz, perde, kod, hece_metni, adim, hms, ams, ef, **(ek[0] if ek else {}))
         if w:
             adaylar_.append((kod, etiket, w))
     for kod, etiket, w in adaylar_:
