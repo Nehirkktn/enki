@@ -10,6 +10,7 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6          # aynı konuşma: düz vs TON (aynı kişi, tonlamalı)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
+  ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -259,13 +260,14 @@ MODLAR = {
 }
 
 
-def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None) -> None:
+def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taban_hiz: str | None = None) -> None:
     _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
-    out = ROOT / "voices" / "aday" / "duygu" / base_key
+    hiz = taban_hiz or hiz
+    out = ROOT / "voices" / "aday" / "duygu" / f"{base_key}_hiz{hiz}"
     out.mkdir(parents=True, exist_ok=True)
     for mod in modlar:
         baslik, tablo, kontur = MODLAR[mod]
-        print(f"\n▶ {baslik}   taban: {base_key}")
+        print(f"\n▶ {baslik}   taban: {base_key}, hız {hiz}")
         for i, (tag, line) in enumerate(SAHNE, 1):
             if sadece and not any(tag.startswith(x) for x in sadece):
                 continue
@@ -345,7 +347,9 @@ def main() -> None:
         base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
         modlar = [a.lower() for a in rest if a.lower() in MODLAR] or ["duz", "ton"]
         sadece = {a.lower() for a in rest if a.lower() in {"excited", "smug", "laugh", "blush", "stern"}}
-        duygu(base, modlar, sadece or None)
+        import re
+        hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
+        duygu(base, modlar, sadece or None, f"{int(hz):+d}%" if hz is not None else None)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
