@@ -7,6 +7,7 @@
   ~/.venv/bin/python tools/ses_dinle.py h          # 2. tur: H etrafında ince ayar (H0–H7)
   ~/.venv/bin/python tools/ses_dinle.py h H2 H5    # 2. turdan sadece seçtiklerin
   ~/.venv/bin/python tools/ses_dinle.py x          # 3. tur: genç + enerjik + parlak (X1–X6)
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6   # aynı konuşma: düz vs duyguya göre tonlanmış
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -93,6 +94,47 @@ IZGARA_X = {
 }
 
 
+# Duygu → ses: her cümle, beynin ürettiği duygu etiketine göre tabana göre biraz kaydırılır.
+# (hız farkı %, perde farkı Hz). Gözlerdeki [smug]/[blush]/[angry] etiketlerinin aynısı.
+DUYGU = {
+    "neutral": (0, 0),
+    "excited": (+8, +8),     # heyecan: hızlı + tiz
+    "smug":    (-6, -6),     # alaycı: yavaş + tok, kelimeleri tadını çıkararak
+    "laugh":   (+5, +4),
+    "blush":   (-2, +12),    # iltifat aldı: tiz, biraz yavaş
+    "stern":   (-12, -12),   # sert mod: yavaş, alçak, esprisiz
+}
+
+SAHNE = [  # küçük bir konuşma: aynı ses, cümle cümle farklı duygu
+    ("excited", "Nehir! Testlerin hepsi geçti, on altıda on altı!"),
+    ("smug",    "Tabii ilk denemede değil. Üçüncü denemede. Ama saymıyorum."),
+    ("blush",   "Ne? Beni mi övdün az önce? Kaydettim bunu, geri alamazsın."),
+    ("laugh",   "Şaka şaka. Ama hafızama yazdım, gerçekten."),
+    ("stern",   "Şimdi ciddi bir şey söyleyeceğim. Lineer cebir vizesi cuma."),
+]
+
+
+def _shift(base: str, delta: int, unit: str) -> str:
+    v = int(base.rstrip(unit)) + delta
+    return f"{v:+d}{unit}"
+
+
+def duygu(base_key: str) -> None:
+    _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
+    out = ROOT / "voices" / "aday" / "duygu" / base_key
+    out.mkdir(parents=True, exist_ok=True)
+    for mod in ("duz", "duygulu"):
+        print(f"\n▶ {'DÜZ (her cümle aynı ton)' if mod == 'duz' else 'DUYGULU (cümle cümle ton değişiyor)'}   taban: {base_key}")
+        for i, (tag, line) in enumerate(SAHNE, 1):
+            dr, dp = DUYGU[tag] if mod == "duygulu" else (0, 0)
+            wav = out / f"{mod}_{i}.wav"
+            if not render(wav, AHMET, _shift(hiz, dr, "%"), _shift(perde, dp, "Hz"), efekt, line):
+                return
+            print(f"   [{tag if mod == 'duygulu' else '-':7}] {line}")
+            subprocess.run(["afplay", str(wav)])
+    print(f"\nDosyalar: {out}")
+
+
 def render(path: pathlib.Path, voice: str, rate: str, pitch: str, effect: str | None, line: str) -> bool:
     if path.exists():
         return True
@@ -150,6 +192,8 @@ def main() -> None:
     elif mode == "h":
         # iki cümle: biri esprili-sakin, biri İngilizce kelimeli
         izgara({a.upper() for a in args[1:]}, IZGARA_H, [1, 2])
+    elif mode == "duygu":
+        duygu(args[1].upper() if len(args) > 1 else "X1")
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
