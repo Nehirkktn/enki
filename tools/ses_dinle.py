@@ -122,8 +122,7 @@ TON = {  # hız: hepsi tabanda (gülmenin hızı beğenildi); duygu ses yüksekl
     "neutral":   (0,  0,   40),
     "excited":   (+3, +15, 0),    # yüksek, nefes almadan; hızda çok küçük artış
     "smug":      (0,  -5,  60),   # kısık, kısa duraklama
-    "laugh":     (0,  +8,  20),   # A: sadece oyuncu ton
-    "laugh_heh": (0,  +8,  0),    # B: başına kısa bir "heh"
+    "laugh":     (0,  +8,  20),   # oyuncu ton; gülmenin kendisi gözlerde ([laugh] animasyonu)
     "blush":     (0,  -12, 60),   # utangaç: kısık
     "stern":     (0,  +10, 70),   # sert: net, yüksek
 }
@@ -134,7 +133,6 @@ SAHNE = [  # küçük bir konuşma: aynı ses, cümle cümle farklı duygu
     ("smug",    "Tabii ilk denemede değil. Üçüncü denemede. Ama saymıyorum."),
     ("blush",   "Ne? Beni mi övdün az önce? Kaydettim bunu, geri alamazsın."),
     ("laugh",   "Şaka şaka. Ama hafızama yazdım, gerçekten."),
-    ("laugh_heh", "Heh. Şaka şaka. Ama hafızama yazdım, gerçekten."),
     ("stern",   "Şimdi ciddi bir şey söyleyeceğim. Lineer cebir vizesi cuma."),
 ]
 
@@ -261,6 +259,8 @@ MODLAR = {
 
 
 def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taban_hiz: str | None = None) -> None:
+    """Önce bütün cümleleri üret, sonra tek parça halinde çal: gerçek Enki de bir sonraki cümleyi
+    o konuşurken hazırlıyor (voice.py pipeline), yani cümleler arasında üretim beklemesi olmayacak."""
     _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
     hiz = taban_hiz or hiz
     out = ROOT / "voices" / "aday" / "duygu" / f"{base_key}_hiz{hiz}"
@@ -268,6 +268,8 @@ def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taba
     for mod in modlar:
         baslik, tablo, kontur = MODLAR[mod]
         print(f"\n▶ {baslik}   taban: {base_key}, hız {hiz}")
+        print("   hazırlanıyor...", flush=True)
+        parcalar = []
         for i, (tag, line) in enumerate(SAHNE, 1):
             if sadece and not any(tag.startswith(x) for x in sadece):
                 continue
@@ -280,8 +282,11 @@ def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taba
                 ok = _render_konturlu(wav, h, p, efekt, line) if kontur else render(wav, AHMET, h, p, efekt, line)
             if not ok:
                 return
+            parcalar.append(wav)
             print(f"   [{tag if tablo else '-':7}] {line}")
-            subprocess.run(["afplay", str(wav)])
+        sahne = out / f"{mod}_sahne.wav"
+        _birlestir(parcalar, sahne, ara_ms=180)  # cümleler arası doğal nefes payı
+        subprocess.run(["afplay", str(sahne)])
     print(f"\nDosyalar: {out}")
 
 
