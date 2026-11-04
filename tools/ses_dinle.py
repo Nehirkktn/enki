@@ -11,7 +11,7 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
   ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
-  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G6), cümleyle birlikte
+  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G9), cümleyle birlikte; sonuna G7 G8 yazarsan sadece onlar
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -303,7 +303,45 @@ def _kikirdama(out: pathlib.Path, hiz: str, perde: str, robot: bool) -> pathlib.
     return son
 
 
-def gulme(base_key: str, taban_hiz: str | None) -> None:
+def _nefes(sr: int, ms: int = 260, seviye: float = 900.0):
+    """Gülmenin sonundaki burundan nefes: alçak geçirgen gürültü, yumuşak zarf."""
+    import numpy as np
+    n = int(sr * ms / 1000)
+    g = np.random.default_rng(7).normal(0, 1, n).astype(np.float32)
+    g = T._one_pole(g, 0.85)                      # hışırtıyı yumuşat
+    zarf = np.sin(np.linspace(0, np.pi, n)) ** 2
+    return g / (np.abs(g).max() or 1) * seviye * zarf
+
+
+def _uzun_kikirdama(out: pathlib.Path, hiz: str, perde: str, ad: str, hece_metni: str,
+                    adim: int, hece_ms: int, ara_ms: int, efekt: str) -> pathlib.Path | None:
+    """Daha uzun, insansı kıkırdama: hece sayısı, ritim düzensizliği, sönümlenme ve sonda nefes."""
+    import numpy as np
+    hece = out / f"hece_{hece_metni.strip('.').lower()}.wav"
+    if not render(hece, AHMET, hiz, perde, None, hece_metni):
+        return None
+    pcm, params = _wav_oku(hece)
+    sr = params.framerate
+    pcm = _kirp(pcm, sr, pay_ms=5)[: int(sr * hece_ms / 1000)].astype(np.float32)
+    fade = int(sr * 0.035)
+    pcm[-fade:] *= np.linspace(1, 0, fade)
+    rng = np.random.default_rng(3)
+    parca = []
+    for k in range(adim):
+        t = k / max(adim - 1, 1)
+        oran = 1.10 - 0.22 * t + rng.uniform(-0.03, 0.03)   # ilk heceler tiz, sona doğru alçalır
+        kazanc = 1.0 - 0.55 * t                              # sönümlenme
+        parca.append(_hizlandir(pcm, oran) * kazanc)
+        bosluk = ara_ms * (1 + 0.6 * t) * rng.uniform(0.85, 1.15)  # ritim sona doğru yavaşlar
+        parca.append(np.zeros(int(sr * bosluk / 1000), np.float32))
+    parca.append(_nefes(sr))
+    son = out / f"{ad}.wav"
+    _wav_yaz(son, np.concatenate(parca), params)
+    T.apply_effect(son, efekt)
+    return son
+
+
+def gulme(base_key: str, taban_hiz: str | None, sadece: set[str] | None = None) -> None:
     _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
     hiz = taban_hiz or hiz
     out = ROOT / "voices" / "aday" / "gulme"
@@ -321,7 +359,18 @@ def gulme(base_key: str, taban_hiz: str | None) -> None:
         w = _kikirdama(out, hiz, perde, robot)
         if w:
             adaylar_.append((kod, "sentez kıkırdama" + (" + hafif robot" if robot else ""), w))
+    uzunlar = [  # (kod, açıklama, hece, adım, hece ms, ara ms, efekt)
+        ("G7", "uzun kıkırdama: 5 'ha', sönen ritim, sonda nefes (~1.8 sn)", "Ha.", 5, 240, 120, "jarvis"),
+        ("G8", "hızlı 'he' kıkırdaması: 6 hece, sonda nefes (~1.5 sn)",       "He.", 6, 170, 80,  "jarvis"),
+        ("G9", "G7 + hafif robot",                                           "Ha.", 5, 240, 120, "robot_hafif"),
+    ]
+    for kod, etiket, hece_metni, adim, hms, ams, ef in uzunlar:
+        w = _uzun_kikirdama(out, hiz, perde, kod, hece_metni, adim, hms, ams, ef)
+        if w:
+            adaylar_.append((kod, etiket, w))
     for kod, etiket, w in adaylar_:
+        if sadece and kod not in sadece:
+            continue
         print(f"\n▶ {kod}  {etiket}")
         birlesik = out / f"{kod}_cumle.wav"
         _birlestir([w, govde], birlesik, ara_ms=90)
@@ -439,7 +488,8 @@ def main() -> None:
         rest = args[1:]
         base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
         hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
-        gulme(base, f"{int(hz):+d}%" if hz is not None else None)
+        sec = {a.upper() for a in rest if re.fullmatch(r"G\d+", a.upper())}
+        gulme(base, f"{int(hz):+d}%" if hz is not None else None, sec or None)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
