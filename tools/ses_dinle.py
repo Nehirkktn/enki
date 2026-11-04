@@ -7,7 +7,8 @@
   ~/.venv/bin/python tools/ses_dinle.py h          # 2. tur: H etrafında ince ayar (H0–H7)
   ~/.venv/bin/python tools/ses_dinle.py h H2 H5    # 2. turdan sadece seçtiklerin
   ~/.venv/bin/python tools/ses_dinle.py x          # 3. tur: genç + enerjik + parlak (X1–X6)
-  ~/.venv/bin/python tools/ses_dinle.py duygu X6   # aynı konuşma: düz vs duyguya göre tonlanmış
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6          # aynı konuşma: düz vs güçlü duygu
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6 guclu    # sadece güçlü (modlar: duz, duygulu, guclu)
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -94,15 +95,23 @@ IZGARA_X = {
 }
 
 
-# Duygu → ses: her cümle, beynin ürettiği duygu etiketine göre tabana göre biraz kaydırılır.
+# Duygu → ses: her cümle, beynin ürettiği duygu etiketine göre tabana göre kaydırılır.
 # (hız farkı %, perde farkı Hz). Gözlerdeki [smug]/[blush]/[angry] etiketlerinin aynısı.
 DUYGU = {
     "neutral": (0, 0),
-    "excited": (+8, +8),     # heyecan: hızlı + tiz
-    "smug":    (-6, -6),     # alaycı: yavaş + tok, kelimeleri tadını çıkararak
+    "excited": (+8, +8),
+    "smug":    (-6, -6),
     "laugh":   (+5, +4),
-    "blush":   (-2, +12),    # iltifat aldı: tiz, biraz yavaş
-    "stern":   (-12, -12),   # sert mod: yavaş, alçak, esprisiz
+    "blush":   (-2, +12),
+    "stern":   (-12, -12),
+}
+DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
+    "neutral": (0, 0),
+    "excited": (+16, +16),
+    "smug":    (-14, -12),
+    "laugh":   (+10, +10),
+    "blush":   (-5, +22),
+    "stern":   (-22, -20),
 }
 
 SAHNE = [  # küçük bir konuşma: aynı ses, cümle cümle farklı duygu
@@ -119,18 +128,78 @@ def _shift(base: str, delta: int, unit: str) -> str:
     return f"{v:+d}{unit}"
 
 
-def duygu(base_key: str) -> None:
+def _parcala(line: str) -> list[str]:
+    """Cümleyi noktalama sınırlarından parçalar (noktalama parçada kalır)."""
+    import re
+    return [p.strip() for p in re.findall(r"[^,.!?…;]+[,.!?…;]*", line) if p.strip()]
+
+
+def _kontur(parca: str, i: int, n: int) -> tuple[int, int]:
+    """Cümle içi tonlama: düz cümlede ses başta yüksek, sonda iner (Türkçede doğal düşüş);
+    soru sonunda kalkar, ünlemde enerji artar. (hız farkı, perde farkı)"""
+    dp = round(6 - 12 * i / max(n - 1, 1)) if n > 1 else 0
+    dr = 0
+    if parca.endswith("?"):
+        dp += 10
+    if parca.endswith("!"):
+        dr, dp = dr + 6, dp + 6
+    return dr, dp
+
+
+def _birlestir(parcalar: list[pathlib.Path], hedef: pathlib.Path, ara_ms: int = 70) -> None:
+    import wave
+    with wave.open(str(parcalar[0]), "rb") as r:
+        params = r.getparams()
+    sessizlik = b"\x00\x00" * params.nchannels * int(params.framerate * ara_ms / 1000)
+    with wave.open(str(hedef), "wb") as w:
+        w.setparams(params)
+        for k, p in enumerate(parcalar):
+            with wave.open(str(p), "rb") as r:
+                w.writeframes(r.readframes(r.getnframes()))
+            if k < len(parcalar) - 1:
+                w.writeframes(sessizlik)
+
+
+def _render_konturlu(wav: pathlib.Path, hiz: str, perde: str, efekt: str | None, line: str) -> bool:
+    if wav.exists():
+        return True
+    parcalar = _parcala(line)
+    tmp = []
+    for i, parca in enumerate(parcalar):
+        dr, dp = _kontur(parca, i, len(parcalar))
+        p = wav.with_name(f"{wav.stem}_p{i}.wav")
+        if not render(p, AHMET, _shift(hiz, dr, "%"), _shift(perde, dp, "Hz"), None, parca):
+            return False
+        tmp.append(p)
+    _birlestir(tmp, wav)
+    for p in tmp:
+        p.unlink()
+    T.apply_effect(wav, efekt)
+    return True
+
+
+MODLAR = {
+    "duz":     ("DÜZ (her cümle aynı ton)", None, False),
+    "duygulu": ("DUYGULU (cümle cümle ton, hafif)", DUYGU, False),
+    "guclu":   ("GÜÇLÜ (iki kat duygu + cümle içi tonlama)", DUYGU_GUCLU, True),
+}
+
+
+def duygu(base_key: str, modlar: list[str]) -> None:
     _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
     out = ROOT / "voices" / "aday" / "duygu" / base_key
     out.mkdir(parents=True, exist_ok=True)
-    for mod in ("duz", "duygulu"):
-        print(f"\n▶ {'DÜZ (her cümle aynı ton)' if mod == 'duz' else 'DUYGULU (cümle cümle ton değişiyor)'}   taban: {base_key}")
+    for mod in modlar:
+        baslik, tablo, kontur = MODLAR[mod]
+        print(f"\n▶ {baslik}   taban: {base_key}")
         for i, (tag, line) in enumerate(SAHNE, 1):
-            dr, dp = DUYGU[tag] if mod == "duygulu" else (0, 0)
+            dr, dp = tablo[tag] if tablo else (0, 0)
+            h, p = _shift(hiz, dr, "%"), _shift(perde, dp, "Hz")
             wav = out / f"{mod}_{i}.wav"
-            if not render(wav, AHMET, _shift(hiz, dr, "%"), _shift(perde, dp, "Hz"), efekt, line):
+            ok = _render_konturlu(wav, h, p, efekt, line) if kontur else render(wav, AHMET, h, p, efekt, line)
+            if not ok:
                 return
-            print(f"   [{tag if mod == 'duygulu' else '-':7}] {line}")
+            print(f"   [{tag if tablo else '-':7}] {line}")
             subprocess.run(["afplay", str(wav)])
     print(f"\nDosyalar: {out}")
 
@@ -193,7 +262,10 @@ def main() -> None:
         # iki cümle: biri esprili-sakin, biri İngilizce kelimeli
         izgara({a.upper() for a in args[1:]}, IZGARA_H, [1, 2])
     elif mode == "duygu":
-        duygu(args[1].upper() if len(args) > 1 else "X1")
+        rest = args[1:]
+        base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
+        modlar = [a.lower() for a in rest if a.lower() in MODLAR] or ["duz", "guclu"]
+        duygu(base, modlar)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
