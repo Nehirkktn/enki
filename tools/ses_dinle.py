@@ -121,7 +121,7 @@ DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
 TON = {  # duraklama = parçaların kenar sessizliği kırpıldıktan SONRA eklenen boşluk
     "neutral": (0,   0,   40),
     "excited": (+12, +15, 0),     # hızlı, yüksek, nefes almadan
-    "smug":    (-10, -5,  90),    # yavaş, kısık, kısa dramatik duraklama
+    "smug":    (-4,  -5,  60),    # hafif yavaş, kısık (-10 ağır çekim gibiydi)
     "laugh":   (+6,  +8,  20),    # A: sadece oyuncu ton
     "laugh_heh": (+6, +8, 0),     # B: başına kısa bir "heh"
     "blush":   (-6,  -12, 60),    # utangaç: yavaş, kısık
@@ -271,7 +271,7 @@ def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taba
         for i, (tag, line) in enumerate(SAHNE, 1):
             if sadece and not any(tag.startswith(x) for x in sadece):
                 continue
-            wav = out / f"{mod}{'4' if kontur == 'ton' else ''}_{i}.wav"
+            wav = out / f"{mod}{'5' if kontur == 'ton' else ''}_{i}.wav"
             if kontur == "ton":
                 ok = _render_ton(wav, hiz, perde, efekt, line, tag)
             else:
