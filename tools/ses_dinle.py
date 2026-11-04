@@ -7,8 +7,8 @@
   ~/.venv/bin/python tools/ses_dinle.py h          # 2. tur: H etrafında ince ayar (H0–H7)
   ~/.venv/bin/python tools/ses_dinle.py h H2 H5    # 2. turdan sadece seçtiklerin
   ~/.venv/bin/python tools/ses_dinle.py x          # 3. tur: genç + enerjik + parlak (X1–X6)
-  ~/.venv/bin/python tools/ses_dinle.py duygu X6          # aynı konuşma: düz vs güçlü duygu
-  ~/.venv/bin/python tools/ses_dinle.py duygu X6 guclu    # sadece güçlü (modlar: duz, duygulu, guclu)
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6          # aynı konuşma: düz vs TON (aynı kişi, tonlamalı)
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -114,6 +114,18 @@ DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
     "stern":   (-22, -20),
 }
 
+# TON: aynı kişi, sadece tonlama. Perde SABİT (perde değişince ses başka biri gibi geliyor).
+# (hız farkı %, ses yüksekliği farkı %, parçalar arası duraklama ms)
+TON = {
+    "neutral": (0,   0,   90),
+    "excited": (+12, +15, 40),    # hızlı, yüksek, nefes almadan
+    "smug":    (-10, -5,  230),   # yavaş, kısık, dramatik duraklamalar
+    "laugh":   (+8,  +5,  60),
+    "blush":   (-6,  -12, 160),   # utangaç: yavaş, kısık
+    "stern":   (-15, +10, 260),   # sert: yavaş, net, uzun duraklama
+}
+KONTUR_HZ = 3  # cümle içi iniş-çıkış: ±3 Hz (kimliği değiştirmeyecek kadar küçük)
+
 SAHNE = [  # küçük bir konuşma: aynı ses, cümle cümle farklı duygu
     ("excited", "Nehir! Testlerin hepsi geçti, on altıda on altı!"),
     ("smug",    "Tabii ilk denemede değil. Üçüncü denemede. Ama saymıyorum."),
@@ -137,12 +149,12 @@ def _parcala(line: str) -> list[str]:
 def _kontur(parca: str, i: int, n: int) -> tuple[int, int]:
     """Cümle içi tonlama: düz cümlede ses başta yüksek, sonda iner (Türkçede doğal düşüş);
     soru sonunda kalkar, ünlemde enerji artar. (hız farkı, perde farkı)"""
-    dp = round(6 - 12 * i / max(n - 1, 1)) if n > 1 else 0
+    dp = round(KONTUR_HZ - 2 * KONTUR_HZ * i / max(n - 1, 1)) if n > 1 else 0
     dr = 0
     if parca.endswith("?"):
-        dp += 10
+        dp += KONTUR_HZ + 2
     if parca.endswith("!"):
-        dr, dp = dr + 6, dp + 6
+        dr += 5
     return dr, dp
 
 
@@ -158,6 +170,42 @@ def _birlestir(parcalar: list[pathlib.Path], hedef: pathlib.Path, ara_ms: int = 
                 w.writeframes(r.readframes(r.getnframes()))
             if k < len(parcalar) - 1:
                 w.writeframes(sessizlik)
+
+
+def _render_vol(path: pathlib.Path, rate: str, pitch: str, volume: str, line: str) -> bool:
+    """EdgeEngine ses yüksekliği parametresini geçirmiyor; burada doğrudan edge_tts çağrılıyor."""
+    if path.exists():
+        return True
+    import asyncio, tempfile
+    import edge_tts
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            mp3 = pathlib.Path(td) / "a.mp3"
+            asyncio.run(edge_tts.Communicate(line, AHMET, rate=rate, pitch=pitch, volume=volume).save(str(mp3)))
+            T._mp3_to_wav(mp3, path)
+        return True
+    except Exception as e:
+        print(f"   üretilemedi: {e}")
+        return False
+
+
+def _render_ton(wav: pathlib.Path, hiz: str, perde: str, efekt: str | None, line: str, tag: str) -> bool:
+    if wav.exists():
+        return True
+    dr0, dv, ara = TON[tag]
+    parcalar = _parcala(line)
+    tmp = []
+    for i, parca in enumerate(parcalar):
+        dr, dp = _kontur(parca, i, len(parcalar))
+        p = wav.with_name(f"{wav.stem}_p{i}.wav")
+        if not _render_vol(p, _shift(hiz, dr0 + dr, "%"), _shift(perde, dp, "Hz"), f"{dv:+d}%", parca):
+            return False
+        tmp.append(p)
+    _birlestir(tmp, wav, ara_ms=ara)
+    for p in tmp:
+        p.unlink()
+    T.apply_effect(wav, efekt)
+    return True
 
 
 def _render_konturlu(wav: pathlib.Path, hiz: str, perde: str, efekt: str | None, line: str) -> bool:
@@ -182,6 +230,7 @@ MODLAR = {
     "duz":     ("DÜZ (her cümle aynı ton)", None, False),
     "duygulu": ("DUYGULU (cümle cümle ton, hafif)", DUYGU, False),
     "guclu":   ("GÜÇLÜ (iki kat duygu + cümle içi tonlama)", DUYGU_GUCLU, True),
+    "ton":     ("TON (aynı kişi; hız, ses yüksekliği, duraklama, küçük iniş-çıkış)", TON, "ton"),
 }
 
 
@@ -193,10 +242,13 @@ def duygu(base_key: str, modlar: list[str]) -> None:
         baslik, tablo, kontur = MODLAR[mod]
         print(f"\n▶ {baslik}   taban: {base_key}")
         for i, (tag, line) in enumerate(SAHNE, 1):
-            dr, dp = tablo[tag] if tablo else (0, 0)
-            h, p = _shift(hiz, dr, "%"), _shift(perde, dp, "Hz")
             wav = out / f"{mod}_{i}.wav"
-            ok = _render_konturlu(wav, h, p, efekt, line) if kontur else render(wav, AHMET, h, p, efekt, line)
+            if kontur == "ton":
+                ok = _render_ton(wav, hiz, perde, efekt, line, tag)
+            else:
+                dr, dp = tablo[tag] if tablo else (0, 0)
+                h, p = _shift(hiz, dr, "%"), _shift(perde, dp, "Hz")
+                ok = _render_konturlu(wav, h, p, efekt, line) if kontur else render(wav, AHMET, h, p, efekt, line)
             if not ok:
                 return
             print(f"   [{tag if tablo else '-':7}] {line}")
@@ -264,7 +316,7 @@ def main() -> None:
     elif mode == "duygu":
         rest = args[1:]
         base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
-        modlar = [a.lower() for a in rest if a.lower() in MODLAR] or ["duz", "guclu"]
+        modlar = [a.lower() for a in rest if a.lower() in MODLAR] or ["duz", "ton"]
         duygu(base, modlar)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
