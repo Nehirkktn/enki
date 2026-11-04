@@ -6,6 +6,7 @@
   ~/.venv/bin/python tools/ses_dinle.py ahmet C F  # ızgaradan sadece C ve F
   ~/.venv/bin/python tools/ses_dinle.py h          # 2. tur: H etrafında ince ayar (H0–H7)
   ~/.venv/bin/python tools/ses_dinle.py h H2 H5    # 2. turdan sadece seçtiklerin
+  ~/.venv/bin/python tools/ses_dinle.py x          # 3. tur: genç + enerjik + parlak (X1–X6)
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -28,6 +29,21 @@ LINES = [
 # Izgara için ek efektler: aynı DSP, farklı doz
 T.EFFECTS["robot_hafif"] = lambda pcm, sr: T.robotize(pcm, sr, mix=0.18, feedback=0.18)
 T.EFFECTS["jarvis_robot"] = lambda pcm, sr: T.jarvisize(T.robotize(pcm, sr, mix=0.15, feedback=0.15), sr)
+
+
+def parlak(pcm, sr):
+    """JARVIS'ten daha parlak, daha az oda: güçlü presence + hafif chorus, kısa yansıma.
+    Enerjik konuşmada uzun yankı sesi bulanıklaştırır, o yüzden oda küçük tutuldu."""
+    import numpy as np
+    x = pcm.astype(np.float32) / 32768.0
+    x = x + 0.6 * (x - T._one_pole(x, 0.92))          # presence/air lift
+    x = T._chorus(x, sr, base_ms=10, depth_ms=1.0, lfo_hz=0.8, mix=0.15)
+    x = T._early_reflections(x, sr, (17, 29), decay=0.25)
+    x /= max(1.0, float(np.abs(x).max()) / 0.95)
+    return (x * 32767).astype(np.int16)
+
+
+T.EFFECTS["parlak"] = parlak
 
 AHMET = "tr-TR-AhmetNeural"
 
@@ -63,6 +79,17 @@ IZGARA_H = {
     "H5": ("H + hafif robot dokunuşu",          "+8%",  "+6Hz",  "robot_hafif"),
     "H6": ("H + JARVIS parlaklığı",             "+8%",  "+6Hz",  "jarvis"),
     "H7": ("H + hafif robot + JARVIS",          "+8%",  "+6Hz",  "jarvis_robot"),
+}
+
+
+# 3. tur: genç + enerjik + parlak (H2 perdesi, H4 hızı, H6 parlaklığı)
+IZGARA_X = {
+    "X1": ("genç+enerjik+JARVIS (doğrudan birleşim)", "+13%", "+10Hz", "jarvis"),
+    "X2": ("X1'in bir tık yumuşağı",                  "+11%", "+8Hz",  "jarvis"),
+    "X3": ("X1'in bir tık fazlası",                   "+15%", "+12Hz", "jarvis"),
+    "X4": ("X1 efektsiz (efektin katkısını duy)",     "+13%", "+10Hz", None),
+    "X5": ("X1 + hafif robot",                        "+13%", "+10Hz", "jarvis_robot"),
+    "X6": ("genç+enerjik+PARLAK (daha az yankı)",     "+13%", "+10Hz", "parlak"),
 }
 
 
@@ -123,6 +150,8 @@ def main() -> None:
     elif mode == "h":
         # iki cümle: biri esprili-sakin, biri İngilizce kelimeli
         izgara({a.upper() for a in args[1:]}, IZGARA_H, [1, 2])
+    elif mode == "x":
+        izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
         adaylar({int(a) for a in args})
 
