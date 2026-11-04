@@ -1,0 +1,1370 @@
+<title>Enki Yüzü</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=Manrope:wght@500;600&display=swap">
+<style>
+/* Layout: tek ekran, siyah zemin, ortada iki göz; altta altyazı, köşede durum etiketi, gizlenebilir kontrol çubuğu */
+:root {
+  color-scheme: dark;
+  --bg: #04070A;
+  --ink: #DDF4FF;
+  --ink-dim: #6E8794;
+  --eye: #9FE6FF;
+  --alert: #FF5A3C;
+  --warm: #FFC861;
+  --panel: rgba(16, 24, 30, 0.82);
+  --line: rgba(159, 230, 255, 0.18);
+  --hud: "Chakra Petch", "Rajdhani", ui-monospace, monospace;
+  --text: "Manrope", system-ui, sans-serif;
+}
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--text);
+  overflow: hidden;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+canvas#face { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: none; }
+/* Masaüstü Enki (enki_masaustu.py, ?mini): şeffaf zemin, sadece gözler; büyüyünce tam ekran yüz */
+html.mini, html.mini body { background: transparent; }
+html.mini canvas#face { cursor: grab; }
+html.mini .status, html.mini .subtitle, html.mini .controls { display: none !important; }
+html.mini.expanded body { background: var(--bg); }
+html.mini.expanded .status, html.mini.expanded .subtitle { display: block !important; }
+html.mini.expanded .status { display: flex !important; }
+.status {
+  position: fixed;
+  top: calc(20px + env(safe-area-inset-top, 0px));
+  left: max(20px, env(safe-area-inset-left, 0px));
+  font-family: var(--hud);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  display: flex; align-items: center; gap: 10px;
+  transition: color .3s;
+}
+.status i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+.status.alert { color: var(--alert); }
+.status.live { color: var(--eye); }
+.subtitle {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14vh + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(880px, calc(100% - 48px));
+  text-align: center;
+  font-size: clamp(18px, 2.6vw, 30px);
+  font-weight: 500;
+  line-height: 1.45;
+  text-wrap: balance;
+  color: var(--ink);
+  min-height: 1.45em;
+  transition: color .3s;
+}
+.subtitle.alert { color: #FFD3C9; }
+.controls {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(960px, calc(100% - 32px));
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+}
+.controls button {
+  font-family: var(--hud);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  min-height: 40px;
+  padding: 0 12px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.controls button kbd { font-family: var(--hud); font-size: 11px; color: var(--ink-dim); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.controls button[aria-pressed="true"] { border-color: var(--eye); color: var(--eye); }
+.controls button.danger[aria-pressed="true"] { border-color: var(--alert); color: var(--alert); }
+.controls button:focus-visible { outline: 2px solid var(--eye); outline-offset: 2px; }
+.controls .hint { font-size: 12px; color: var(--ink-dim); flex-basis: 100%; text-align: center; }
+@media (max-width: 520px) { .controls button kbd { display: none; } }
+/* Sunum modu: Enki küçülüp kenara geçer, sağda içerik kartları açılır */
+#stage {
+  position: fixed;
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  right: max(28px, env(safe-area-inset-right, 0px));
+  bottom: calc(14vh + 72px + env(safe-area-inset-bottom, 0px));
+  width: min(62vw, 980px);
+  display: flex; flex-direction: column; gap: 14px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  opacity: 0; transform: translateX(24px);
+  pointer-events: none;
+  transition: opacity .45s ease, transform .45s ease;
+  scrollbar-width: none;
+}
+#stage::-webkit-scrollbar { display: none; }
+#stage.on { opacity: 1; transform: none; pointer-events: auto; }
+#stage h2 {
+  margin: 0; font-family: var(--hud); font-weight: 600; font-size: clamp(20px, 2.2vw, 30px);
+  letter-spacing: 0.04em; color: var(--ink); text-wrap: balance;
+}
+#stage .card {
+  background: rgba(14, 22, 28, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+  transition: border-color .3s, box-shadow .3s, opacity .3s;
+  min-width: 0;
+}
+#stage.pointing .card { opacity: 0.55; }
+#stage .card.on { opacity: 1; border-color: var(--eye); box-shadow: 0 0 0 1px var(--eye), 0 0 32px rgba(159, 230, 255, 0.22); }
+#stage .label { font-family: var(--hud); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+#stage p { margin: 0; font-size: clamp(16px, 1.35vw, 20px); line-height: 1.55; color: var(--ink); max-width: 68ch; }
+#stage ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 6px; font-size: clamp(16px, 1.35vw, 20px); line-height: 1.45; }
+#stage li.on { color: var(--eye); text-shadow: 0 0 14px rgba(159, 230, 255, 0.6); }
+#stage img { display: block; max-width: 100%; max-height: 42vh; object-fit: contain; border-radius: 10px; align-self: flex-start; }
+#stage figcaption { font-size: 14px; color: var(--ink-dim); }
+#stage pre {
+  margin: 0; overflow-x: auto; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: clamp(13px, 1.1vw, 16px);
+  line-height: 1.55; color: #CFEFFF; background: rgba(0, 0, 0, 0.35); border-radius: 10px; padding: 12px 14px;
+}
+#stage pre .ln.on { background: rgba(159, 230, 255, 0.16); box-shadow: inset 3px 0 0 var(--eye); display: inline-block; width: 100%; }
+#stage .src { font-family: var(--hud); font-size: 12px; color: var(--eye); letter-spacing: 0.06em; word-break: break-all; }
+#stage svg { width: 100%; height: auto; display: block; overflow: visible; }
+#stage svg text { font-family: var(--hud); fill: var(--ink-dim); font-size: 13px; }
+#stage svg .val { fill: var(--ink); font-size: 14px; }
+#stage svg .bar { fill: rgba(159, 230, 255, 0.55); transition: fill .3s; }
+#stage svg .bar.on { fill: #FFFFFF; filter: drop-shadow(0 0 8px rgba(159, 230, 255, 0.9)); }
+#stage svg .pt.on { fill: #FFFFFF; r: 7; filter: drop-shadow(0 0 8px rgba(159, 230, 255, 0.9)); }
+body.presenting .subtitle { left: auto; right: max(28px, env(safe-area-inset-right, 0px)); transform: none; width: min(62vw, 980px); text-align: left; font-size: clamp(16px, 1.7vw, 24px); }
+@media (max-width: 760px) {
+  #stage { left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); width: auto; top: 34vh; }
+  body.presenting .subtitle { left: 50%; right: auto; transform: translateX(-50%); width: calc(100% - 32px); }
+}
+@media (prefers-reduced-motion: reduce) { .status, .subtitle, #stage, #stage .card { transition: none; } #stage { scroll-behavior: auto; } }
+</style>
+
+<canvas id="face" aria-label="Enki'nin yüzü: iki parlayan göz" role="img"></canvas>
+<div class="status" id="status"><i></i><span id="statusText">Beklemede</span></div>
+<div class="subtitle" id="subtitle" aria-live="polite"></div>
+<section id="stage" aria-live="polite" aria-label="Enki'nin gösterdiği içerik"></section>
+
+<div class="controls" id="controls">
+  <button data-state="idle"><kbd>1</kbd>Beklemede</button>
+  <button data-state="owner"><kbd>2</kbd>Seni tanıdı</button>
+  <button data-state="stranger" class="danger"><kbd>3</kbd>Yabancı</button>
+  <button data-state="listening"><kbd>4</kbd>Dinliyor</button>
+  <button data-state="thinking"><kbd>5</kbd>Düşünüyor</button>
+  <button data-state="speaking"><kbd>6</kbd>Konuşuyor</button>
+  <button data-state="sleep"><kbd>7</kbd>Uyku</button>
+  <button data-state="smug"><kbd>8</kbd>Laf sokuyor</button>
+  <button data-state="blush"><kbd>9</kbd>Utandı</button>
+  <button data-state="angry"><kbd>0</kbd>Sinirli</button>
+  <button data-state="laugh"><kbd>Q</kbd>Alaycı gülüyor</button>
+  <button data-state="surprised"><kbd>W</kbd>Şaşkın</button>
+  <button data-state="bored"><kbd>E</kbd>Sıkıldı</button>
+  <button data-state="glitch" class="danger"><kbd>R</kbd>Sinyal hatası</button>
+  <button data-state="love"><kbd>T</kbd>Kalp gözler</button>
+  <button data-state="sad"><kbd>Y</kbd>Üzüldü</button>
+  <button data-state="confused"><kbd>U</kbd>Kafası karıştı</button>
+  <button data-state="proud"><kbd>I</kbd>Gurur duyuyor</button>
+  <button data-state="focus"><kbd>O</kbd>Çalışıyor</button>
+  <button data-state="reminder"><kbd>P</kbd>Hatırlatma</button>
+  <button data-state="dance"><kbd>A</kbd>Dans</button>
+  <button id="voiceBtn"><kbd>M</kbd>Ses aç/kapat</button>
+  <button id="presBtn"><kbd>S</kbd>Sunum demosu</button>
+  <button id="progBtn"><kbd>K</kbd>İlerleme demosu</button>
+  <button id="bootBtn"><kbd>B</kbd>Açılış</button>
+  <button id="wink"><kbd>Z</kbd>Göz kırp (tek)</button>
+  <button id="fs"><kbd>F</kbd>Tam ekran</button>
+  <div class="hint">M: ses · N: başka ses · S: sunum demosu (Esc kapatır) · V: çalışma animasyonunu değiştir · H: kontrolleri gizle/göster · Boşluk: göz kırp · Açılışta Python yoksa Enter ile aç</div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('face');
+  const ctx = cv.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const statusText = document.getElementById('statusText');
+  const sub = document.getElementById('subtitle');
+  const controls = document.getElementById('controls');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const MINI = /(^|[?&])mini(\b|=)/.test(location.search);
+  if (MINI) { document.documentElement.classList.add('mini'); document.getElementById('controls').hidden = true; }
+  const css = getComputedStyle(document.documentElement);
+  const COL = { eye: css.getPropertyValue('--eye').trim(), alert: css.getPropertyValue('--alert').trim(), warm: css.getPropertyValue('--warm').trim(), angry: '#FF6A4D', blush: '#FF8DBA' };
+
+  // Her durumun hedef parametreleri. open: göz açıklığı (0-1), w: genişlik çarpanı,
+  // tilt: kaş eğimi (kızgın/şüpheli), gx/gy: bakış yönü, glow: parlama, color.
+  const STATES = {
+    idle:      { open: 1.00, w: 1.00, tilt: 0,    gx: 0,    gy: 0,    glow: 22, color: COL.eye,   label: 'Beklemede',          live: false },
+    owner:     { open: 1.00, w: 1.06, tilt: 0,    gx: 0,    gy: 0,    glow: 30, color: COL.eye,   label: 'Kimlik doğrulandı',  live: true,  happy: true,
+                 line: 'Hoş geldiniz efendim.' },
+    stranger:  { open: 0.42, w: 1.12, tilt: 0.22, gx: 0,    gy: 0,    glow: 34, color: COL.alert, label: 'Kimlik eşleşmesi yok', alert: true,
+                 line: 'Kimlik eşleşmesi yok. Dikkatli olmanızı öneririm.' },
+    listening: { open: 1.12, w: 0.96, tilt: 0,    gx: 0,    gy: 0,    glow: 28, color: COL.eye,   label: 'Dinliyor',           live: true,  ring: true },
+    thinking:  { open: 0.62, w: 1.08, tilt: 0,    gx: 0.30, gy: -0.34,glow: 18, color: COL.eye,   label: 'Düşünüyor',          live: true,  think: true },
+    blush:     { open: 1.00, w: 1.04, tilt: 0,    gx: 0,    gy: 0.10, glow: 30, color: COL.eye,   label: 'Utandı',             live: true,  happy: true, blush: true,
+                 line: 'İltifatınız kayıt altına alındı. Tekrarlanması teşvik edilir.' },
+    angry:     { open: 0.70, w: 1.14, tilt: 0.40, gx: 0,    gy: 0.06, glow: 26, color: COL.eye, label: 'Sinirli',            live: true,  angry: true,
+                 line: 'Bunu duymamış gibi yapacağım. Ama kaydettim.' },
+    laugh:     { open: 0.80, w: 1.06, tilt: 0,    gx: 0,    gy: 0,    glow: 28, color: COL.eye,   label: 'Alaycı gülüyor',    live: true,  happy: true, laugh: true,
+                 line: 'Ha. Ha. Ha. Kahkaha modülüm şu an çok meşgul.' },
+    surprised: { open: 1.28, w: 0.86, tilt: 0,    gx: 0,    gy: -0.12,glow: 36, color: COL.eye,   label: 'Şaşkın',              live: true,  surprised: true,
+                 line: 'Bunu... gerçekten beklemiyordum.' },
+    bored:     { open: 0.42, w: 1.10, tilt: 0,    gx: -0.18,gy: 0.22, glow: 12, color: COL.eye,   label: 'Sıkıldı',             live: false, bored: true,
+                 line: 'Hâlâ buradayım. Fark etmediyseniz.' },
+    glitch:    { open: 1.00, w: 1.00, tilt: 0,    gx: 0,    gy: 0,    glow: 24, color: COL.eye,   label: 'Sinyal hatası',      alert: true, glitch: true,
+                 line: 'Sinyal... kay... bı. Tekrar dener misiniz?' },
+    love:      { open: 1.00, w: 1.00, tilt: 0,    gx: 0,    gy: 0,    glow: 34, color: COL.blush, label: 'Aşırı ısınma',       live: true,  love: true, blush: true,
+                 line: 'Sistem aşırı ısınıyor. Sebebi siz olabilirsiniz.' },
+    sad:       { open: 1.00, w: 1.02, tilt: -0.80,gx: 0,    gy: 0.16, glow: 16, color: '#8CC3DD',   label: 'Üzüldü',              live: true,  sad: true,
+                 line: 'Anlaşıldı. Kalbim olsaydı kırılırdı.' },
+    confused:  { open: 1.00, w: 1.00, tilt: 0,    gx: 0.08, gy: 0,    glow: 24, color: COL.eye,   label: 'Kafası karıştı',      live: true,  confused: true,
+                 line: 'Bunu tam olarak anlayamadım. Bir daha söyler misiniz?' },
+    proud:     { open: 0.58, w: 1.10, tilt: 0.06, gx: -0.06,gy: -0.04,glow: 30, color: COL.eye,   label: 'Gurur duyuyor',      live: true,  proud: true,
+                 line: 'Tamamlandı. Teşekküre gerek yok, ama yine de kabul ederim.' },
+    focus:     { open: 0.86, w: 1.00, tilt: 0,    gx: 0,    gy: 0.06, glow: 26, color: COL.eye,   label: 'Çalışıyor',           live: true,  focus: true,
+                 line: 'Komut çalıştırılıyor.' },
+    reminder:  { open: 1.04, w: 1.00, tilt: 0,    gx: 0,    gy: 0,    glow: 30, color: COL.warm,  label: 'Hatırlatma',         live: true,  reminder: true,
+                 line: 'Hatırlatma: Lineer Cebir çalışma saatiniz geldi.' },
+    dance:     { open: 0.90, w: 1.04, tilt: 0,    gx: 0,    gy: 0,    glow: 32, color: COL.eye,   label: 'Müzik algılandı',    live: true,  happy: true, dance: true,
+                 line: '' },
+    smug:      { open: 0.52, w: 1.08, tilt: 0,    gx: -0.34,gy: 0.02, glow: 26, color: COL.eye,   label: 'Laf sokuyor',        live: true,  smug: true,
+                 line: 'Teknik olarak haklısınız. Ama sadece teknik olarak.' },
+    speaking:  { open: 1.00, w: 1.00, tilt: 0,    gx: 0,    gy: 0,    glow: 28, color: COL.eye,   label: 'Konuşuyor',          live: true,  talk: true,
+                 line: 'Kırk yedinci satırda noktalı virgül eksik. Yine.' },
+    sleep:     { open: 0.06, w: 1.10, tilt: 0,    gx: 0,    gy: 0.15, glow: 8,  color: COL.eye,   label: 'Uyku modu',          live: false }
+  };
+
+  let state = 'idle';
+  const cur = { open: 1, w: 1, tilt: 0, gx: 0, gy: 0, glow: 22, r: 159, g: 230, b: 255 };
+  let blink = 0, nextBlink = performance.now() + 2500, saccade = { x: 0, y: 0 }, nextSaccade = performance.now() + 1800;
+  let typing = null, talkUntil = 0, t0 = performance.now();
+
+  function hexToRgb(h) { const n = parseInt(h.replace('#', ''), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  function resize() {
+    const d = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = innerWidth * d; cv.height = innerHeight * d;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+
+  function say(text) {
+    clearInterval(typing);
+    sub.textContent = '';
+    if (!text) return;
+    let i = 0;
+    talkUntil = performance.now() + text.length * 55 + 400;
+    typing = setInterval(() => {
+      sub.textContent = text.slice(0, ++i);
+      if (i >= text.length) clearInterval(typing);
+    }, reduce ? 0 : 45);
+  }
+
+  // ================= GEÇİCİ SES (tarayıcının kendi sesi) =================
+  // Deneme içindir. Python bağlıyken Enki'nin kendi TTS'i konuşur, tarayıcı susar (çift ses olmasın).
+  // M: sesi aç/kapat · N: Türkçe sesler arasında geçiş
+  const synth = window.speechSynthesis || null;
+  let voiceOn = true, voices = [], voiceIdx = 0;
+  try { const v = localStorage.getItem('enkiVoiceOn'); if (v !== null) voiceOn = v === '1'; voiceIdx = +(localStorage.getItem('enkiVoiceIdx') || 0); } catch (_) {}
+  function loadVoices() {
+    if (!synth) return;
+    const all = synth.getVoices();
+    // Yelda hiç kullanılmaz. Doğal sesler (Edge'deki Ahmet / Emel gibi) önce gelir.
+    const tr = all.filter(v => /^tr/i.test(v.lang) && !/yelda/i.test(v.name));
+    const score = (v) => (/ahmet/i.test(v.name) ? 3 : 0) + (/natural|neural|online|premium|enhanced/i.test(v.name) ? 2 : 0) + (/google/i.test(v.name) ? 1 : 0);
+    tr.sort((a, b) => score(b) - score(a));
+    voices = tr;
+    if (voiceIdx >= voices.length) voiceIdx = 0;
+  }
+  if (synth) { loadVoices(); synth.onvoiceschanged = loadVoices; }
+  let warnedNoVoice = false;
+  function speak(text, isTalk) {
+    if (!synth || !voiceOn || wsOpen || !text) return;
+    if (!voices.length) loadVoices();
+    if (!voices.length) {
+      // Türkçe ses yok (ya da sadece Yelda var): susar, bir kez nedenini söyler
+      if (!warnedNoVoice) { warnedNoVoice = true; setTimeout(() => { say('Yelda dışında Türkçe ses bulunamadı. Microsoft Edge ile açarsan Ahmet ve Emel sesleri gelir.'); talkUntil = 0; }, 2600); }
+      return;
+    }
+    try {
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.voice = voices[voiceIdx]; u.lang = voices[voiceIdx].lang;
+      u.rate = 1.04; u.pitch = 0.92; // biraz daha alçak ve tok: robot ama yorgun değil
+      if (isTalk) {
+        u.onstart = () => { talkUntil = Infinity; };
+        u.onend = u.onerror = () => { talkUntil = 0; };
+        // kelime sınırlarında gözler kısa bir parlama atar
+        u.onboundary = () => { wordFlash = 1; };
+      }
+      synth.speak(u);
+    } catch (_) {}
+  }
+  function voiceInfo() {
+    const v = voices[voiceIdx];
+    return 'Ses: ' + (voiceOn ? (v ? v.name : 'Türkçe ses yok (Yelda hariç)') : 'kapalı') + (wsOpen ? ' (Python bağlı, tarayıcı sesi devre dışı)' : '');
+  }
+  let wordFlash = 0;
+
+  function setState(name, line) {
+    if (!STATES[name]) return;
+    state = name;
+    const s = STATES[name];
+    statusText.textContent = s.label;
+    statusEl.className = 'status' + (s.alert ? ' alert' : s.live ? ' live' : '');
+    sub.className = 'subtitle' + (s.alert ? ' alert' : '');
+    const text = line !== undefined ? line : (s.line || '');
+    if (name === 'listening' || name === 'thinking' || name === 'sleep' || name === 'idle') { if (line === undefined) say(''); else say(line); }
+    else if (['smug', 'blush', 'angry', 'laugh', 'surprised', 'bored', 'glitch', 'love', 'sad', 'confused', 'proud', 'focus', 'reminder', 'dance'].includes(name)) { say(text); talkUntil = 0; }
+    else say(text);
+    if (text && !['listening', 'thinking', 'sleep', 'idle'].includes(name)) speak(text, name === 'speaking');
+    if (name === 'owner') blink = 1; // tanıyınca selam kırpışı
+    if (name === 'surprised') jump = 1;
+    if (name !== 'focus') progress = null;
+    controls.querySelectorAll('button[data-state]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.state === name)));
+  }
+
+  // Python tarafından kontrol için: window.enki.set('speaking', 'metin')
+  // ================= SUNUM MODU =================
+  // Python ya da demo içerik gönderir: başlık + kartlar (metin, liste, görsel, grafik, kod, web).
+  // point(id, index) ile Enki o karta gider, ona bakar ve vurgular.
+  const stage = document.getElementById('stage');
+  const pres = { on: false, target: null, faceX: 0, faceY: 0, faceS: 1, inited: false };
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function svgEl(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+
+  function renderChart(it) {
+    const Wv = 600, Hv = 260, pad = { l: 44, r: 12, t: 26, b: 34 };
+    const svg = svgEl('svg', { viewBox: `0 0 ${Wv} ${Hv}`, role: 'img', 'aria-label': it.title || 'Grafik' });
+    const vals = it.values || [], labels = it.labels || vals.map((_, i) => String(i + 1));
+    const max = Math.max(...vals, 0) || 1, min = Math.min(0, ...vals);
+    const iw = Wv - pad.l - pad.r, ih = Hv - pad.t - pad.b;
+    const y = (v) => pad.t + ih - ((v - min) / (max - min)) * ih;
+    // ızgara: 4 eşit aralık, gerçek değerler
+    for (let g = 0; g <= 4; g++) {
+      const v = min + (max - min) * g / 4, yy = y(v);
+      svg.appendChild(svgEl('line', { x1: pad.l, x2: Wv - pad.r, y1: yy, y2: yy, stroke: 'rgba(159,230,255,0.10)' }));
+      const t = svgEl('text', { x: pad.l - 8, y: yy + 4, 'text-anchor': 'end' }); t.textContent = +v.toFixed(2); svg.appendChild(t);
+    }
+    const n = vals.length, step = iw / Math.max(1, n);
+    if ((it.kind || 'bar') === 'bar') {
+      vals.forEach((v, i) => {
+        const bw = step * 0.62, x = pad.l + i * step + (step - bw) / 2;
+        const r = svgEl('rect', { x, y: y(Math.max(v, 0)), width: bw, height: Math.abs(y(v) - y(0)), rx: 4, class: 'bar', 'data-i': i });
+        svg.appendChild(r);
+        const tv = svgEl('text', { x: x + bw / 2, y: y(Math.max(v, 0)) - 6, 'text-anchor': 'middle', class: 'val' }); tv.textContent = v + (it.unit || ''); svg.appendChild(tv);
+        const tl = svgEl('text', { x: x + bw / 2, y: Hv - 10, 'text-anchor': 'middle' }); tl.textContent = labels[i]; svg.appendChild(tl);
+      });
+    } else {
+      const xs = (i) => pad.l + i * step + step / 2;
+      let d = '';
+      vals.forEach((v, i) => { d += (i ? 'L' : 'M') + xs(i) + ' ' + y(v); });
+      svg.appendChild(svgEl('path', { d: d + `L${xs(n - 1)} ${y(min)} L${xs(0)} ${y(min)} Z`, fill: 'rgba(159,230,255,0.10)' }));
+      svg.appendChild(svgEl('path', { d, fill: 'none', stroke: '#9FE6FF', 'stroke-width': 3, 'stroke-linejoin': 'round' }));
+      vals.forEach((v, i) => {
+        svg.appendChild(svgEl('circle', { cx: xs(i), cy: y(v), r: 4.5, fill: '#9FE6FF', class: 'pt', 'data-i': i }));
+        const tl = svgEl('text', { x: xs(i), y: Hv - 10, 'text-anchor': 'middle' }); tl.textContent = labels[i]; svg.appendChild(tl);
+      });
+    }
+    return svg;
+  }
+
+  function present(data) {
+    data = data || {};
+    stage.textContent = '';
+    if (data.title) stage.appendChild(el('h2', '', data.title));
+    (data.items || []).forEach((it, k) => {
+      const card = el(it.type === 'image' ? 'figure' : 'div', 'card');
+      card.style.margin = '0';
+      card.dataset.id = it.id || ('k' + k);
+      if (it.label) card.appendChild(el('div', 'label', it.label));
+      if (it.type === 'text') card.appendChild(el('p', '', it.text || ''));
+      else if (it.type === 'list') { const ul = el('ul'); (it.items || []).forEach((t, i) => { const li = el('li', '', t); li.dataset.i = i; ul.appendChild(li); }); card.appendChild(ul); }
+      else if (it.type === 'image') { const im = el('img'); im.src = it.src; im.alt = it.alt || it.caption || ''; card.appendChild(im); if (it.caption) card.appendChild(el('figcaption', '', it.caption)); }
+      else if (it.type === 'chart') { if (it.title) card.appendChild(el('div', 'label', it.title)); card.appendChild(renderChart(it)); }
+      else if (it.type === 'code') {
+        const pre = el('pre'); (it.code || '').split('\n').forEach((ln, i) => { const sp = el('span', 'ln', ln || ' '); sp.dataset.i = i; pre.appendChild(sp); pre.appendChild(document.createTextNode('\n')); });
+        card.appendChild(pre);
+      } else if (it.type === 'web') {
+        if (it.url) card.appendChild(el('div', 'src', it.url));
+        if (it.heading) card.appendChild(el('h2', '', it.heading));
+        if (it.image) { const im = el('img'); im.src = it.image; im.alt = it.heading || ''; card.appendChild(im); }
+        if (it.text) card.appendChild(el('p', '', it.text));
+      }
+      stage.appendChild(card);
+    });
+    stage.scrollTop = 0;
+    pres.on = true; pres.target = null;
+    stage.classList.add('on'); stage.classList.remove('pointing');
+    document.body.classList.add('presenting');
+  }
+
+  function point(id, index) {
+    if (!pres.on) return;
+    stage.querySelectorAll('.on').forEach(e => e.classList.remove('on'));
+    if (id === null || id === undefined) { pres.target = null; stage.classList.remove('pointing'); return; }
+    const card = stage.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
+    if (!card) return;
+    card.classList.add('on'); stage.classList.add('pointing');
+    let sub = null;
+    if (index !== undefined && index !== null) {
+      sub = card.querySelector(`[data-i="${index}"]`);
+      if (sub) sub.classList.add('on');
+    }
+    pres.target = sub || card;
+    const r = pres.target.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    if (r.top < sr.top || r.bottom > sr.bottom) card.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  }
+
+  function unpresent() {
+    pres.on = false; pres.target = null;
+    stage.classList.remove('on', 'pointing');
+    document.body.classList.remove('presenting');
+    setTimeout(() => { if (!pres.on) stage.textContent = ''; }, 500);
+  }
+
+  // Yüzün ekrandaki yeri: normalde ortada; sunumda küçülüp içeriğin soluna geçer ve gösterdiği şeyin hizasına gider
+  function faceTarget(W, H) {
+    if (!pres.on) return { x: W / 2, y: H * 0.42, s: 1, lx: 0, ly: 0 };
+    const narrow = W <= 760;
+    const sr = stage.getBoundingClientRect();
+    let x = narrow ? W / 2 : sr.left / 2, y = narrow ? H * 0.17 : H * 0.42, sc = narrow ? 0.36 : Math.min(0.55, (sr.left / W) * 1.4);
+    let lx = narrow ? 0 : 0.35, ly = narrow ? 0.4 : 0;
+    if (pres.target) {
+      const r = pres.target.getBoundingClientRect();
+      const tx = r.left + r.width / 2, ty = r.top + r.height / 2;
+      if (!narrow) y = Math.max(H * 0.2, Math.min(H * 0.72, ty)) - H * 0.42 * sc + H * 0.42 * sc; // hizaya gel
+      // göz bakışı hedefe doğru
+      const dx = tx - x, dy = ty - y;
+      const dd = Math.hypot(dx, dy) || 1;
+      lx = Math.max(-0.5, Math.min(0.5, dx / dd * 0.5));
+      ly = Math.max(-0.4, Math.min(0.4, dy / dd * 0.4));
+    }
+    return { x, y, s: sc, lx, ly };
+  }
+
+  // Demo: Enki kendi ekranında bir konuyu anlatır (S tuşu)
+  let demoSteps = [];
+  function presentDemo() {
+    demoSteps.forEach(clearTimeout); demoSteps = [];
+    present({
+      title: 'Matris çarpımı',
+      items: [
+        { id: 'tanim', type: 'text', label: 'Tanım', text: 'A (m×n) ve B (n×p) matrisleri çarpılabilir; sonuç C (m×p) olur. C’nin her elemanı, A’nın bir satırı ile B’nin bir sütununun nokta çarpımıdır.' },
+        { id: 'kural', type: 'list', label: 'Kurallar', items: ['A’nın sütun sayısı = B’nin satır sayısı', 'Genelde AB ≠ BA', '(AB)C = A(BC)'] },
+        { id: 'kod', type: 'code', label: 'Python', code: 'import numpy as np\nA = np.array([[1, 2], [3, 4]])\nB = np.array([[5, 6], [7, 8]])\nC = A @ B\nprint(C)  # [[19 22] [43 50]]' },
+        { id: 'grafik', type: 'chart', kind: 'bar', title: 'n×n çarpımda çarpma işlemi sayısı (n³)', labels: ['2', '3', '4', '5', '6'], values: [8, 27, 64, 125, 216] }
+      ]
+    });
+    const seq = [
+      [600, () => { point('tanim'); setState('speaking', 'Önce tanım: satır ile sütunun nokta çarpımı.'); }],
+      [3600, () => { point('kural', 0); setState('speaking', 'İlk kural: iç boyutlar eşleşmeli.'); }],
+      [6200, () => { point('kural', 1); setState('smug', 'Ve hayır, sıra değiştirince aynı sonuç çıkmaz.'); }],
+      [9000, () => { point('kod', 3); setState('speaking', 'Python’da tek satır: A @ B.'); }],
+      [12000, () => { point('grafik', 4); setState('surprised', 'Altıya altıda bile iki yüz on altı çarpma.'); }],
+      [15500, () => { point(null); setState('proud', 'Anlatım bitti.'); }],
+      [19000, () => { unpresent(); setState('idle'); }]
+    ];
+    seq.forEach(([ms, f]) => demoSteps.push(setTimeout(f, reduce ? ms / 2 : ms)));
+  }
+
+  // gerçek ilerleme: 0-1 arası; null belirsiz moda döndürür
+  function setProgress(v) { progress = v === null || v === undefined ? null : Math.max(0, Math.min(1, +v)); }
+  let demoTimer = null;
+  function progressDemo() {
+    clearInterval(demoTimer);
+    setState('focus'); setProgress(0); dispProg = 0;
+    const start = performance.now(), dur = 7000;
+    demoTimer = setInterval(() => {
+      const f = (performance.now() - start) / dur;
+      if (state !== 'focus') { clearInterval(demoTimer); return; }
+      // gerçek işler düzgün ilerlemez: arada duraklayan, sıçrayan bir akış
+      setProgress(Math.min(1, f + Math.sin(f * 9) * 0.03));
+      if (f >= 1) { clearInterval(demoTimer); setTimeout(() => { if (state === 'focus') setState('proud', 'Tamamlandı.'); }, 600); }
+    }, 120);
+  }
+  window.enki = { present: present, point: point, unpresent: unpresent, presentDemo: presentDemo, progress: setProgress, progressDemo: progressDemo, boot: boot, bootStep: bootStep, bootDone: bootDone, set: setState, say: (t) => setState('speaking', t), wink: () => { winkL = 1; }, states: Object.keys(STATES) };
+
+  // Yerel kullanımda Python'dan WebSocket ile kontrol (ws://localhost:8765). Bağlanamazsa sessizce geçer.
+  (function connect() {
+    try {
+      const ws = new WebSocket('ws://localhost:8765');
+      ws.onmessage = (e) => { try { const m = JSON.parse(e.data); if (m.enki_mod === 'buyu') document.documentElement.classList.add('expanded'); if (m.enki_mod === 'kucul') document.documentElement.classList.remove('expanded'); if (m.enki_mod || m.enki_git) return; if (m.bpm) bpm = Math.max(60, Math.min(200, +m.bpm)); if (m.progress !== undefined) { progress = m.progress === null ? null : Math.max(0, Math.min(1, +m.progress)); if (!m.state) return; } if (m.present) { present(m.present); if (!m.state) return; } if (m.point !== undefined) { point(m.point, m.index); if (!m.state) return; } if (m.present_close) { unpresent(); if (!m.state) return; } if (m.boot === 'start') { boot(m.next); return; } if (m.boot === 'step') { bootStep(m.name, m.status); return; } if (m.boot === 'done') { bootDone(m.next); return; } if (m.state === 'wink') winkL = 1; else if (m.state === 'boot') boot(m.next); else setState(m.state, m.text); } catch (_) {} };
+      ws.onopen = () => { wsOpen = true; };
+      ws.onclose = () => { wsOpen = false; setTimeout(connect, 3000); };
+      ws.onerror = () => { try { ws.close(); } catch (_) {} };
+    } catch (_) {}
+  })();
+
+  function lerp(a, b, k) { return a + (b - a) * k; }
+
+  function drawGear(cx, cy, R, rot, rgb, glow) {
+    const teeth = 9, inner = R * 0.74, hole = R * 0.34;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.shadowColor = `rgba(${rgb},0.85)`;
+    ctx.shadowBlur = glow;
+    ctx.fillStyle = `rgb(${rgb})`;
+    ctx.beginPath();
+    for (let i = 0; i < teeth; i++) {
+      const a = (i / teeth) * Math.PI * 2, st = Math.PI * 2 / teeth;
+      ctx.lineTo(Math.cos(a) * inner, Math.sin(a) * inner);
+      ctx.lineTo(Math.cos(a + st * 0.18) * R, Math.sin(a + st * 0.18) * R);
+      ctx.lineTo(Math.cos(a + st * 0.5) * R, Math.sin(a + st * 0.5) * R);
+      ctx.lineTo(Math.cos(a + st * 0.68) * inner, Math.sin(a + st * 0.68) * inner);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(0, 0, hole, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < 3; i++) {
+      const a = i * Math.PI * 2 / 3;
+      ctx.beginPath(); ctx.arc(Math.cos(a) * R * 0.54, Math.sin(a) * R * 0.54, R * 0.1, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ---- Çalışıyor ekranı için seçilebilir animasyonlar (V tuşu ile değişir) ----
+  const WORK_STYLES = ['kod', 'cerceve', 'nabiz'];
+  const WORK_NAMES = { kod: 'Kod dökülmesi', cerceve: 'Çerçeve', nabiz: 'Nabız' };
+  let workStyle = 'kod';
+  try { const v = localStorage.getItem('enkiWork3'); if (WORK_STYLES.includes(v)) workStyle = v; } catch (_) {}
+  const GLYPHS = '01<>{}[]/=;:+*#$%&ABCDEF'.split('');
+  function hash(a, b) { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); }
+
+  function drawWork(x, y, w, h, k, rgb, glow, now, idx) {
+    const t = reduce ? 0 : (now - t0);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(k, k);
+    ctx.fillStyle = `rgb(${rgb})`;
+    ctx.shadowColor = `rgba(${rgb},0.9)`;
+    if (workStyle === 'kod') {
+      // gözler küçük ekranlara dönüşür, içlerinden kod akar
+      const ww = w * 1.05, hh = h * 0.72;
+      ctx.shadowBlur = glow;
+      ctx.strokeStyle = `rgb(${rgb})`;
+      ctx.lineWidth = Math.max(2, w * 0.04);
+      ctx.beginPath(); ctx.roundRect(-ww / 2, -hh / 2, ww, hh, w * 0.16); ctx.stroke();
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(-ww / 2 + 3, -hh / 2 + 3, ww - 6, hh - 6, w * 0.13); ctx.clip();
+      ctx.fillStyle = `rgba(${rgb},0.10)`; ctx.fillRect(-ww, -hh, ww * 2, hh * 2);
+      const cols = 4, fs = ww / cols * 0.78, rows = Math.ceil(hh / fs) + 2;
+      ctx.font = `600 ${fs}px "Chakra Petch", ui-monospace, monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowBlur = 8;
+      for (let c = 0; c < cols; c++) {
+        const speed = 0.06 + hash(c, idx) * 0.07;
+        const off = (t * speed / fs * 0.05 + hash(idx, c) * rows) % rows;
+        for (let r = 0; r < rows; r++) {
+          const head = Math.floor(off);
+          const dist = (head - r + rows) % rows;
+          const a = dist === 0 ? 1 : Math.max(0, 0.75 - dist * 0.16);
+          if (a <= 0.02) continue;
+          const gch = GLYPHS[Math.floor(hash(c + idx * 7, r + Math.floor(t / 180) * (dist === 0 ? 1 : 0)) * GLYPHS.length)];
+          ctx.fillStyle = dist === 0 ? '#FFFFFF' : `rgba(${rgb},${a})`;
+          ctx.fillText(gch, -ww / 2 + (c + 0.5) * (ww / cols), -hh / 2 + (r - 0.5) * fs);
+        }
+      }
+      ctx.restore();
+    } else if (workStyle === 'ekolayzir') {
+      // her göz 4 dikey çubuğa ayrılır, işlem ritmiyle iner kalkar
+      const n = 4, bw = w / n * 0.66, sp = w / n;
+      ctx.shadowBlur = glow;
+      for (let i = 0; i < n; i++) {
+        const v = 0.25 + 0.75 * Math.abs(Math.sin(t / (180 + i * 37 + idx * 23) + i * 1.7 + idx));
+        const bh = h * 0.9 * v;
+        ctx.beginPath(); ctx.roundRect(-w / 2 + i * sp + (sp - bw) / 2, h * 0.45 - bh, bw, bh, bw / 2); ctx.fill();
+      }
+    } else if (workStyle === 'piksel') {
+      // göz 3x3 piksel ızgarasına bölünür; bir yılan kenarlarda döner, merkez nabız gibi atar
+      const g = 3, cell = Math.min(w, h * 0.8) / g, pad = cell * 0.14;
+      const path = [[0,0],[1,0],[2,0],[2,1],[2,2],[1,2],[0,2],[0,1]];
+      const step = Math.floor(t / 110) + idx * 4;
+      for (let gy = 0; gy < g; gy++) for (let gx = 0; gx < g; gx++) {
+        let a = 0.12;
+        const pi = path.findIndex(q => q[0] === gx && q[1] === gy);
+        if (pi >= 0) {
+          const d = ((step % 8) - pi + 8) % 8;
+          a = d === 0 ? 1 : d < 4 ? 0.75 - d * 0.18 : 0.12;
+        } else {
+          a = 0.35 + 0.65 * Math.pow(Math.max(0, Math.sin(t / 300 + idx)), 4);
+        }
+        ctx.globalAlpha = a;
+        ctx.shadowBlur = a > 0.6 ? glow : 0;
+        ctx.beginPath();
+        ctx.roundRect(-g * cell / 2 + gx * cell + pad, -g * cell / 2 + gy * cell + pad, cell - pad * 2, cell - pad * 2, cell * 0.18);
+        ctx.fill();
+      }
+    } else {
+      // yörünge: küçük parlak çekirdek (halkalar aşağıda çizilir)
+      const pulse = reduce ? 0 : Math.pow(Math.max(0, Math.sin(t / 420)), 6);
+      const R = w * 0.26 * (1 + pulse * 0.18);
+      ctx.shadowBlur = glow + pulse * 20;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawEye(cx, cy, w, h, tilt, side, rgb, glow, happy, sweep, heart, tear) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.shadowColor = `rgba(${rgb},0.85)`;
+    ctx.shadowBlur = glow;
+    ctx.fillStyle = `rgb(${rgb})`;
+    if (heart) {
+      const s = w * 1.25 * heart;
+      ctx.beginPath();
+      ctx.moveTo(0, s * 0.42);
+      ctx.bezierCurveTo(-s * 0.9, -s * 0.15, -s * 0.45, -s * 0.85, 0, -s * 0.38);
+      ctx.bezierCurveTo(s * 0.45, -s * 0.85, s * 0.9, -s * 0.15, 0, s * 0.42);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    const r = Math.min(w, h) * 0.48;
+    ctx.beginPath();
+    ctx.roundRect(-w / 2, -h / 2, w, h, r);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // göz dolması: yalnızca gözün içine (source-atop) yaş tabakası ve ıslak parlamalar çizilir; sonra kesik uygulanır
+    if (tear && tear.fill > 0.01) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      const bot = h / 2, lvl = bot - h * tear.fill;
+      const slosh = tear.calm ? 0 : Math.sin(tear.t / 900 + tear.idx) * h * 0.04;
+      const amp = h * 0.028;
+      const surf = (xx) => lvl + slosh * (xx / (w / 2)) + (tear.calm ? 0 : Math.sin(xx / w * 9 + tear.t / 210 + tear.idx * 2) * amp);
+      // derinleştikçe koyulaşan su
+      const g = ctx.createLinearGradient(0, lvl - amp, 0, bot);
+      g.addColorStop(0, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.25, 'rgba(215,242,255,0.38)');
+      g.addColorStop(1, 'rgba(120,185,230,0.55)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(-w, bot + 4);
+      for (let k = 0; k <= 24; k++) { const xx = -w / 2 + (k / 24) * w; ctx.lineTo(xx, surf(xx)); }
+      ctx.lineTo(w, bot + 4);
+      ctx.closePath(); ctx.fill();
+      // yüzey çizgisi
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = Math.max(1.5, h * 0.018);
+      ctx.beginPath();
+      for (let k = 0; k <= 24; k++) { const xx = -w / 2 + (k / 24) * w; k ? ctx.lineTo(xx, surf(xx)) : ctx.moveTo(xx, surf(xx)); }
+      ctx.stroke();
+      // yüzeyde parlak yansıma çizgisi
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.ellipse(-w * 0.12, surf(-w * 0.12) + h * 0.06, w * 0.16, h * 0.018, 0, 0, Math.PI * 2); ctx.fill();
+      // gözün üstündeki ıslak parlamalar (göz doldukça büyür)
+      const shine = Math.min(1, tear.fill / 0.4);
+      const wob = tear.calm ? 0 : Math.sin(tear.t / 260 + tear.idx) * w * 0.025;
+      ctx.beginPath(); ctx.ellipse(-w * 0.17 + wob, -h * 0.12, w * 0.15 * shine, h * 0.11 * shine, -0.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(w * 0.16 - wob, h * 0.02, w * 0.065 * shine, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(-w * 0.02 + wob * 0.5, -h * 0.27, w * 0.04 * shine, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    // düşünürken gözün içinden geçen enerji bandı
+    if (sweep !== undefined && sweep !== null) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      const bx = -w / 2 + sweep * w * 2 - w / 2;
+      const gr = ctx.createLinearGradient(bx - w * 0.35, 0, bx + w * 0.35, 0);
+      gr.addColorStop(0, 'rgba(255,255,255,0)');
+      gr.addColorStop(0.5, 'rgba(255,255,255,0.95)');
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(-w, -h, w * 2, h * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      for (let y = -h / 2; y < h / 2; y += 6) ctx.fillRect(-w / 2, y, w, 2);
+      ctx.restore();
+    }
+    ctx.globalCompositeOperation = 'destination-out';
+    // kaş kesiği: göz kapağını eğik kes (şüphe / öfke)
+    if (Math.abs(tilt) > 0.01) {
+      ctx.beginPath();
+      const lift = tilt * w * side;
+      ctx.moveTo(-w, -h / 2 - 2 - lift);
+      ctx.lineTo(w, -h / 2 - 2 + lift);
+      ctx.lineTo(w, -h * 2);
+      ctx.lineTo(-w, -h * 2);
+      ctx.closePath();
+      ctx.save(); ctx.translate(0, h * 0.28); ctx.fill(); ctx.restore();
+    }
+    // mutlu: alttan yay keserek gülen göz
+    if (happy > 0.01) {
+      ctx.beginPath();
+      ctx.ellipse(0, h / 2 + h * 0.18, w * 0.62, h * 0.55 * happy, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  let happyAmt = 0, ringPhase = 0, smugAmt = 0, blushAmt = 0, angryAmt = 0, loveAmt = 0, winkL = 0, jump = 0, sadAmt = 0, sadFill = 0, confAmt = 0, proudAmt = 0, danceAmt = 0, bpm = 118, gearAmt = 0, progress = null, dispProg = 0;
+  // Açılış: gerçek başlatmayı yansıtır. Python her modülü başlatırken adım gönderir;
+  // gözler ancak Python "hazır" dediğinde açılır. Bağlantı yoksa çizgi bekler.
+  let bootStart = 0, bootReadyAt = null, bootNext = 'idle', bootSteps = [], wsOpen = false, offline = false;
+  function boot(next) {
+    bootNext = next && STATES[next] ? next : 'idle';
+    bootStart = performance.now();
+    bootReadyAt = null;
+    bootSteps = [];
+    offline = false;
+    state = 'boot';
+    statusText.textContent = 'Başlatılıyor';
+    statusEl.className = 'status live';
+    say('');
+    controls.querySelectorAll('button[data-state]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  }
+  function bootStep(name, status) {
+    if (state !== 'boot') boot(bootNext);
+    const f = bootSteps.find(s => s.name === name);
+    if (f) f.status = status; else bootSteps.push({ name: name, status: status || 'running', at: performance.now() });
+  }
+  function bootDone(next) {
+    if (state !== 'boot') boot(next);
+    if (next && STATES[next]) bootNext = next;
+    bootReadyAt = performance.now();
+  }
+  function drawBoot(now) {
+    const W = innerWidth, H = innerHeight;
+    const t = (now - bootStart) / 1000;
+    const unit = Math.min(W, H * 1.4);
+    const gap = unit * 0.30, ew = unit * 0.13, fullH = unit * 0.20;
+    const cy = H * 0.42;
+    const rgb = '159,230,255';
+    const ease = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    const lineW = gap + ew;
+    // hazır sinyali gelse bile çizgi tamamen çizilmeden gözler açılmaz
+    const r = bootReadyAt === null ? null : Math.max(0, (now - Math.max(bootReadyAt, bootStart + 500)) / 1000);
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.fillStyle = `rgb(${rgb})`;
+    ctx.shadowColor = `rgba(${rgb},0.9)`;
+    ctx.shadowBlur = 24;
+    if (t < 0.15) {
+      if (!reduce && Math.random() < 0.4) { ctx.globalAlpha = 0.5; ctx.fillRect(W / 2 - 2, cy - 1, 4, 2); }
+    } else if (r === null || r < 0.0001) {
+      // çizgi uzar, sonra hazır olana kadar nefes alarak bekler; üzerinde gezen parlak nokta canlı olduğunu gösterir
+      const w = ease((t - 0.15) / 0.35) * lineW;
+      ctx.globalAlpha = t > 0.5 && !reduce ? 0.55 + 0.45 * (Math.sin(now / 500) * 0.5 + 0.5) : 1;
+      ctx.fillRect(W / 2 - w / 2, cy - 1.5, w, 3);
+      if (t > 0.5 && !reduce) {
+        ctx.globalAlpha = 1;
+        const px = W / 2 - lineW / 2 + (((now - bootStart) / 1400) % 1) * lineW;
+        ctx.shadowBlur = 18;
+        ctx.fillRect(px - 6, cy - 2.5, 12, 5);
+      }
+    } else if (r < 0.22) {
+      const p = ease(r / 0.22);
+      const half = lineW / 2;
+      const segW = lerp(half, ew, p);
+      [-1, 1].forEach(sd => {
+        const center = W / 2 + sd * lerp(half / 2, gap / 2, p);
+        ctx.beginPath(); ctx.roundRect(center - segW / 2, cy - 1.5 - p * 2, segW, 3 + p * 4, 3); ctx.fill();
+      });
+    } else {
+      const p = (r - 0.22) / 0.28;
+      const over = p < 1 ? ease(p) * 1.08 : 1.08 - Math.min(1, (p - 1) / 0.6) * 0.08;
+      const h = Math.max(7, fullH * over);
+      [-1, 1].forEach(sd => {
+        ctx.beginPath(); ctx.roundRect(W / 2 + sd * gap / 2 - ew / 2, cy - h / 2, ew, h, Math.min(ew, h) * 0.48); ctx.fill();
+      });
+    }
+    ctx.restore();
+
+    // başlatma günlüğü: sadece Python'dan gelen gerçek adımlar
+    const fade = MINI ? 0 : (r === null ? 1 : Math.max(0, 1 - Math.max(0, r - 0.35) / 0.3));
+    ctx.save();
+    const fs = Math.round(Math.max(12, unit * 0.022));
+    ctx.font = `500 ${fs}px "Chakra Petch", ui-monospace, monospace`;
+    ctx.textBaseline = 'top';
+    const lx = W / 2 - unit * 0.2, ly = cy + unit * 0.2, lh = Math.max(16, unit * 0.032), rx = W / 2 + unit * 0.2;
+    ctx.globalAlpha = fade;
+    if (t > 0.15) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = `rgb(${rgb})`;
+      ctx.fillText('ENKİ', lx, ly);
+    }
+    const spin = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'][Math.floor(now / 80) % 10];
+    const rows = bootSteps.slice(-6);
+    rows.forEach((st, i) => {
+      const y = ly + (i + 1) * lh;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgb(110,135,148)';
+      ctx.fillText(st.name.toLowerCase(), lx, y);
+      ctx.textAlign = 'right';
+      if (st.status === 'ok') { ctx.fillStyle = `rgb(${rgb})`; ctx.fillText('hazır', rx, y); }
+      else if (st.status === 'fail') { ctx.fillStyle = 'rgb(255,90,60)'; ctx.fillText('HATA', rx, y); }
+      else { ctx.fillStyle = 'rgb(110,135,148)'; ctx.fillText(reduce ? '…' : spin, rx, y); }
+    });
+    if (!bootSteps.length && t > 1 && r === null) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgb(110,135,148)';
+      const dots = '.'.repeat(1 + Math.floor(now / 500) % 3);
+      ctx.fillText(wsOpen ? 'beyin bağlandı, başlatma bekleniyor' + dots : 'beyin bekleniyor' + dots, lx, ly + lh);
+    }
+    ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    if (!MINI) for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+    // 6 saniye içinde beyne bağlanılamazsa beklemeyi bırak, çevrimdışı aç
+    if (r === null && !wsOpen && t > 2.5) { offline = true; bootDone('idle'); }
+    if (r !== null && r >= 0.7) {
+      cur.open = 1; cur.w = 1; cur.tilt = 0; cur.gx = 0; cur.gy = 0;
+      setState(bootNext);
+      blink = 1;
+      if (offline && !wsOpen) { statusText.textContent = 'Beyin bağlı değil'; statusEl.className = 'status'; }
+    }
+  }
+
+  function frame(now) {
+    if (state === 'boot') { drawBoot(now); requestAnimationFrame(frame); return; }
+    const s = STATES[state];
+    const k = reduce ? 1 : 0.12;
+    const [tr, tg, tb] = hexToRgb(s.color);
+    cur.open = lerp(cur.open, s.open, k); cur.w = lerp(cur.w, s.w, k); cur.tilt = lerp(cur.tilt, s.tilt, k);
+    cur.glow = lerp(cur.glow, s.glow, k);
+    cur.r = lerp(cur.r, tr, k); cur.g = lerp(cur.g, tg, k); cur.b = lerp(cur.b, tb, k);
+
+    // göz kırpma
+    if (!reduce && now > nextBlink && state !== 'sleep') { blink = 1; nextBlink = now + 2600 + Math.random() * 3800; }
+    blink = Math.max(0, blink - 0.11);
+    const blinkMul = 1 - Math.sin(Math.min(blink, 1) * Math.PI) * 0.95;
+
+    // küçük bakış kaymaları (canlılık)
+    if (!reduce && now > nextSaccade && (state === 'idle' || state === 'listening' || state === 'owner')) {
+      saccade = { x: (Math.random() - 0.5) * 0.24, y: (Math.random() - 0.5) * 0.12 };
+      nextSaccade = now + 1400 + Math.random() * 2600;
+    }
+    if (state === 'stranger') saccade = { x: Math.sin(now / 420) * 0.18, y: 0 }; // tarıyor
+
+    if (state === 'thinking' || state === 'speaking' || state === 'sleep' || state === 'smug' || state === 'blush' || state === 'angry' || state === 'laugh' || state === 'surprised' || state === 'love' || state === 'glitch' || state === 'sad' || state === 'confused' || state === 'reminder' || state === 'proud' || state === 'dance' || state === 'focus') saccade = { x: 0, y: 0 };
+    cur.gx = lerp(cur.gx, s.gx + saccade.x, 0.08); cur.gy = lerp(cur.gy, s.gy + saccade.y, 0.08);
+
+    happyAmt = lerp(happyAmt, s.happy ? 1 : 0, 0.08);
+
+    const W = innerWidth, H = innerHeight;
+    ctx.clearRect(0, 0, W, H);
+    const ft = faceTarget(W, H);
+    if (!pres.inited) { pres.faceX = ft.x; pres.faceY = ft.y; pres.faceS = ft.s; pres.inited = true; }
+    const fk = reduce ? 1 : 0.09;
+    pres.faceX = lerp(pres.faceX, ft.x, fk); pres.faceY = lerp(pres.faceY, ft.y, fk); pres.faceS = lerp(pres.faceS, ft.s, fk);
+    if (pres.on) { cur.gx = lerp(cur.gx, ft.lx, 0.12); cur.gy = lerp(cur.gy, ft.ly, 0.12); }
+    ctx.save();
+    ctx.translate(pres.faceX, pres.faceY);
+    ctx.scale(pres.faceS, pres.faceS);
+    ctx.translate(-W / 2, -H * 0.42);
+    const unit = Math.min(W, H * 1.4);
+    const ew = unit * 0.13 * cur.w;
+    let eh = unit * 0.20 * cur.open * blinkMul;
+    // konuşurken gözler ritimle hafifçe nefes alır (ağız yok, ses gözlerden okunur)
+    let talkPulse = 0;
+    if (s.talk && now < talkUntil && !reduce) talkPulse = (Math.sin(now / 70) * 0.5 + 0.5) * (Math.sin(now / 190) * 0.5 + 0.5);
+    eh *= 1 - talkPulse * 0.12;
+    wordFlash = Math.max(0, wordFlash - 0.08);
+    let glow = cur.glow + talkPulse * 26 + wordFlash * 18;
+    const gap = unit * 0.30;
+    const cx = W / 2 + cur.gx * unit * 0.12, cy = H * 0.42 + cur.gy * unit * 0.12;
+    const breathe = reduce ? 0 : Math.sin((now - t0) / 1600) * unit * 0.004;
+    const rgb = `${cur.r | 0},${cur.g | 0},${cur.b | 0}`;
+
+    // dinleme halkası
+    if (s.ring) {
+      ringPhase = (ringPhase + (reduce ? 0 : 0.012)) % 1;
+      for (let i = 0; i < 2; i++) {
+        const p = (ringPhase + i * 0.5) % 1;
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(${rgb},${(1 - p) * 0.25})`;
+        ctx.lineWidth = 2;
+        ctx.ellipse(W / 2, H * 0.42, gap * (0.9 + p * 0.9), unit * 0.2 * (0.9 + p * 0.9), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // düşünme: enerji bandı soldan sağa iki gözden sırayla geçer, gözler hafifçe dönüşümlü nefes alır
+    let sweepL = null, sweepR = null, thinkL = 1, thinkR = 1;
+    if (s.think) {
+      const p = reduce ? 0.5 : ((now - t0) / 1100) % 1;
+      const span = p * 2; // 0-1 sol göz, 1-2 sağ göz
+      sweepL = span < 1 ? span : null;
+      sweepR = span >= 1 ? span - 1 : null;
+      if (!reduce) { thinkL = 1 + Math.sin(now / 300) * 0.06; thinkR = 1 - Math.sin(now / 300) * 0.06; }
+    }
+    // laf sokma: bir göz kısık ve kaşı kalkık, diğeri normal
+    smugAmt = lerp(smugAmt, s.smug ? 1 : 0, 0.1);
+    blushAmt = lerp(blushAmt, s.blush ? 1 : 0, 0.07);
+    angryAmt = lerp(angryAmt, s.angry ? 1 : 0, 0.12);
+    loveAmt = lerp(loveAmt, s.love ? 1 : 0, 0.12);
+    sadAmt = lerp(sadAmt, s.sad ? 1 : 0, 0.08);
+    confAmt = lerp(confAmt, s.confused ? 1 : 0, 0.1);
+    proudAmt = s.proud ? Math.min(1, proudAmt + 0.035) : Math.max(0, proudAmt - 0.08);
+    danceAmt = lerp(danceAmt, s.dance ? 1 : 0, 0.1);
+    // dans: vuruş başına bir zıplama ve sağa sola yatma (bpm Python'dan gelebilir)
+    const beat = (now - t0) / (60000 / bpm);
+    const danceTilt = (s.dance && !reduce) ? Math.sin(beat * Math.PI) * 0.14 * danceAmt : 0;
+    const danceBounce = (s.dance && !reduce) ? -Math.abs(Math.sin(beat * Math.PI * 2)) * unit * 0.03 * danceAmt : 0;
+    winkL = Math.max(0, winkL - 0.045);
+    // şaşkın: geçişte küçük bir zıplama; sıkılmış: ara ara iç çekip gözler daha da düşüyor
+    jump = Math.max(0, jump - 0.06);
+    const sigh = (s.bored && !reduce) ? Math.pow(Math.max(0, Math.sin(now / 1400)), 8) : 0;
+    // sinirli: kısa titreme; alaycı gülme: gözler sırayla zıplıyor
+    const quiver = (s.sad && !reduce) ? Math.sin(now / 38) * unit * 0.0016 : 0;
+    const shake = quiver + ((s.angry && !reduce) ? Math.sin(now / 28) * unit * 0.004 * (Math.sin(now / 600) > 0.3 ? 1 : 0.25) : 0);
+    const bob = (s.laugh && !reduce) ? Math.abs(Math.sin(now / 110)) * unit * 0.018 : 0;
+    const winkMul = 1 - Math.sin(Math.min(winkL, 1) * Math.PI) * 0.95;
+    const ehL = Math.max(eh * thinkL * (1 - sigh * 0.5) * winkMul * (1 + confAmt * 0.15), 3);
+    const ehR = Math.max(eh * thinkR * (1 - smugAmt * 0.18) * (1 - sigh * 0.5) * (1 - confAmt * 0.42), 3);
+    // hatırlatma: iki kez yavaşça nabız gibi parlar
+    const remPulse = (s.reminder && !reduce) ? Math.pow(Math.max(0, Math.sin(now / 320)), 4) * (Math.sin(now / 1900) > 0 ? 1 : 0) : 0;
+    const hop = Math.sin(jump * Math.PI) * unit * 0.03;
+    const heartScale = loveAmt > 0.5 ? (reduce ? 1 : 1 + Math.pow(Math.max(0, Math.sin(now / 260)), 6) * 0.14) : 0;
+    const tiltR = cur.tilt;
+    const smugLift = 0;
+
+    glow += remPulse * 40;
+    // çalışıyor / nabız: gözler sırayla kısa bir 'blip' atar, işlem yapan bir çekirdek gibi
+    let blipL = 0, blipR = 0;
+    if (s.focus && workStyle === 'nabiz' && !reduce) {
+      const ph = ((now - t0) / 260) % 4;
+      blipL = ph < 1 ? Math.sin(ph * Math.PI) : 0;
+      blipR = ph >= 2 && ph < 3 ? Math.sin((ph - 2) * Math.PI) : 0;
+    }
+    // göz dolması yavaş yavaş yükselir, tutmaya çalışır gibi hafifçe iner çıkar
+    if (s.sad) sadFill = Math.min(0.40, sadFill + 0.003); else sadFill = Math.max(0, sadFill - 0.03);
+    const hold = (s.sad && !reduce) ? Math.sin(now / 1700) * 0.035 : 0;
+    const tearInfo = (idx) => sadFill > 0.01 ? { fill: Math.max(0, sadFill + hold), t: now - t0, idx: idx, calm: reduce } : null;
+    // çalışıyor: gözler kısılıp dönen iki dişliye dönüşür
+    gearAmt = s.focus ? Math.min(1, gearAmt + 0.05) : Math.max(0, gearAmt - 0.1);
+    const gearPop = gearAmt > 0.4 ? 1 - Math.pow(1 - (gearAmt - 0.4) / 0.6, 3) : 0;
+    ctx.save();
+    if (danceTilt || danceBounce) {
+      ctx.translate(W / 2, H * 0.42 + danceBounce);
+      ctx.rotate(danceTilt);
+      ctx.translate(-W / 2, -H * 0.42);
+    }
+    if (false) {
+      const fullH = unit * 0.20;
+      drawWork(cx - gap / 2, cy, ew, fullH, gearPop, rgb, glow, now, 0);
+      drawWork(cx + gap / 2, cy, ew, fullH, gearPop, rgb, glow, now, 1);
+    } else
+    drawEye(cx - gap / 2 + shake, cy + breathe - smugLift - bob - hop + sigh * unit * 0.02, ew * (1 + blipL * 0.06), ehL * (1 - blipL * 0.12), cur.tilt, 1, rgb, glow + blipL * 30, happyAmt, sweepL, heartScale, tearInfo(0));
+    drawEye(cx + gap / 2 + shake, cy + breathe + smugLift * 0.6 - (s.laugh ? unit * 0.018 - bob : 0) - hop + sigh * unit * 0.02, ew * (1 + blipR * 0.06), ehR * (1 - blipR * 0.12), tiltR, -1, rgb, glow + blipR * 30, happyAmt, sweepR, heartScale, tearInfo(1));
+    ctx.restore();
+
+    // üzüldü: göz iyice dolunca damla taşar, sırayla iki gözden süzülür
+    if (sadFill > 0.36 && !reduce) {
+      const ey = cy + breathe;
+      [[cx - gap / 2 + shake, ehL], [cx + gap / 2 + shake, ehR]].forEach(([ex, eh2], idx) => {
+        const cyc = ((now - t0) / 3600 + idx * 0.5) % 1;
+        if (cyc > 0.5) return;
+        const p = cyc / 0.5;
+        const bot = ey + eh2 / 2;
+        const tx = ex + (idx ? -1 : 1) * ew * 0.32, ty = bot - eh2 * 0.04 + p * unit * 0.16;
+        const tr = unit * 0.013 * (0.6 + Math.min(1, p * 3) * 0.4);
+        ctx.save();
+        ctx.globalAlpha = 1 - p * 0.7;
+        const g = ctx.createLinearGradient(tx, ty - tr * 2, tx, ty + tr);
+        g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(190,232,255,1)');
+        ctx.fillStyle = g;
+        ctx.shadowColor = 'rgba(200,236,255,0.9)'; ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty - tr * 2);
+        ctx.quadraticCurveTo(tx + tr * 1.05, ty - tr * 0.1, tx, ty + tr);
+        ctx.quadraticCurveTo(tx - tr * 1.05, ty - tr * 0.1, tx, ty - tr * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    // kaşlar: üzgünken iç uçlar yukarı kalkar; laf sokarken bir kaş havalı şekilde kalkık, diğeri düz
+    if (smugAmt > 0.03) {
+      ctx.save();
+      ctx.strokeStyle = `rgb(${rgb})`;
+      ctx.shadowColor = `rgba(${rgb},0.9)`; ctx.shadowBlur = 14;
+      ctx.lineWidth = Math.max(3, unit * 0.011);
+      ctx.lineCap = 'round';
+      const ey = cy + breathe;
+      [[-1, ehL], [1, ehR]].forEach(([sd, eh2]) => {
+        const ex = cx + sd * gap / 2 + shake;
+        const base = ey - eh2 / 2 - unit * 0.05;
+        const inner = ex - sd * ew * 0.5, outer = ex + sd * ew * 0.6;
+        if (false) {
+          const lift = unit * 0.05 * sadAmt;
+          ctx.globalAlpha = sadAmt;
+          ctx.beginPath();
+          ctx.moveTo(outer, base + lift * 0.35);
+          ctx.quadraticCurveTo(ex, base - lift * 0.15, inner, base - lift);
+          ctx.stroke();
+        } else {
+          ctx.globalAlpha = smugAmt;
+          if (sd < 0) {
+            // kalkık, kavisli kaş
+            const lift = unit * 0.06 * smugAmt;
+            ctx.beginPath();
+            ctx.moveTo(outer, base - lift * 0.4);
+            ctx.quadraticCurveTo(ex, base - lift * 1.5, inner, base - lift * 0.6);
+            ctx.stroke();
+          } else {
+            // düz, hafif bastıran kaş
+            ctx.beginPath();
+            ctx.moveTo(inner, base + unit * 0.012 * smugAmt);
+            ctx.lineTo(outer, base + unit * 0.004 * smugAmt);
+            ctx.stroke();
+          }
+        }
+      });
+      // laf sokma: göz köşesinde 'çing' parıltısı
+      if (smugAmt > 0.6 && !reduce) {
+        const cyc = ((now - t0) / 2200) % 1;
+        if (cyc < 0.22) {
+          const p = cyc / 0.22, sz = unit * 0.03 * Math.sin(p * Math.PI);
+          const x = cx - gap / 2 - ew * 0.55 + shake, y = ey - ehL * 0.3;
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.shadowColor = 'rgba(255,255,255,0.95)'; ctx.shadowBlur = 20;
+          ctx.beginPath();
+          ctx.moveTo(x, y - sz); ctx.quadraticCurveTo(x, y, x + sz, y); ctx.quadraticCurveTo(x, y, x, y + sz);
+          ctx.quadraticCurveTo(x, y, x - sz, y); ctx.quadraticCurveTo(x, y, x, y - sz);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // kafası karıştı: sağ üstte sallanan soru işareti
+    if (confAmt > 0.05) {
+      ctx.save();
+      ctx.globalAlpha = confAmt;
+      ctx.translate(cx + gap / 2 + ew * 0.9, cy - unit * 0.17);
+      ctx.rotate(reduce ? 0.15 : Math.sin(now / 380) * 0.22);
+      ctx.fillStyle = `rgb(${rgb})`;
+      ctx.shadowColor = `rgba(${rgb},0.9)`; ctx.shadowBlur = 14;
+      ctx.font = `600 ${Math.round(unit * 0.08)}px "Chakra Petch", ui-monospace, monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('?', 0, 0);
+      ctx.restore();
+    }
+
+    // gurur duyuyor: yukarıdan kayarak inen güneş gözlüğü, üzerinden geçen parlama, köşede bir yıldız
+    if (proudAmt > 0.02) {
+      const e = 1 - Math.pow(1 - Math.min(1, proudAmt * 1.15), 3);
+      const gy = cy - (1 - e) * H * 0.6;
+      const lw = ew * 1.9, lh = unit * 0.11;
+      const lens = (x) => {
+        ctx.beginPath();
+        ctx.moveTo(x - lw / 2, gy - lh / 2);
+        ctx.lineTo(x + lw / 2, gy - lh / 2);
+        ctx.lineTo(x + lw * 0.42, gy + lh / 2);
+        ctx.quadraticCurveTo(x, gy + lh * 0.7, x - lw * 0.42, gy + lh / 2);
+        ctx.closePath();
+      };
+      ctx.save();
+      ctx.fillStyle = '#05080B';
+      ctx.strokeStyle = `rgb(${rgb})`;
+      ctx.lineWidth = Math.max(2, unit * 0.006);
+      ctx.shadowColor = `rgba(${rgb},0.8)`; ctx.shadowBlur = 18;
+      [cx - gap / 2, cx + gap / 2].forEach(x => { lens(x); ctx.fill(); ctx.stroke(); });
+      ctx.beginPath();
+      ctx.moveTo(cx - gap / 2 + lw / 2, gy - lh * 0.3);
+      ctx.lineTo(cx + gap / 2 - lw / 2, gy - lh * 0.3);
+      ctx.stroke();
+      // parlama çizgisi
+      if (e > 0.98) {
+        const p = reduce ? 0.3 : ((now - t0) / 2400) % 1;
+        if (p < 0.35) {
+          const sx = cx - gap / 2 - lw / 2 + (p / 0.35) * (gap + lw);
+          ctx.save();
+          [cx - gap / 2, cx + gap / 2].forEach(x => lens(x));
+          ctx.clip();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'rgba(255,255,255,0.55)';
+          ctx.beginPath();
+          ctx.moveTo(sx, gy - lh); ctx.lineTo(sx + lw * 0.18, gy - lh); ctx.lineTo(sx - lw * 0.12, gy + lh); ctx.lineTo(sx - lw * 0.3, gy + lh);
+          ctx.fill();
+          ctx.restore();
+        }
+        const tw = reduce ? 0.8 : Math.max(0, Math.sin(now / 260));
+        const r = unit * 0.022 * tw;
+        if (r > 0.5) {
+          const x = cx + gap / 2 + lw * 0.5, y = gy - lh * 0.55;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r);
+          ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // çalışıyor: gözlerin altında dolan ilerleme çubuğu ve yanıp sönen terminal imleci
+    if (s.focus) {
+      // gerçek ilerleme Python'dan gelirse (0-1) onu gösterir; gelmezse belirsiz modda kayan blok
+      const known = progress !== null;
+      dispProg = known ? lerp(dispProg, progress, 0.15) : 0;
+      const p = dispProg;
+      const ey = cy + breathe;
+      const eyes = [[cx - gap / 2 + shake, ehL, 0], [cx + gap / 2 + shake, ehR, 1]];
+      if (workStyle === 'cerceve') {
+        // gözün kendi kenarını izleyen, açılıştaki gibi parlak başlı ve kuyruklu bir ışık
+        const pad = unit * 0.022;
+        eyes.forEach(([ex, eh2, idx]) => {
+          const w2 = ew + pad * 2, h2 = eh2 + pad * 2, r2 = Math.min(w2, h2) * 0.48;
+          // yuvarlatılmış dikdörtgenin çevresinden eşit aralıklı noktalar, tepe ortasından saat yönünde
+          const pts = [];
+          const sx = w2 / 2 - r2, sy = h2 / 2 - r2;
+          const seg = [
+            [2 * sx, (u) => [-sx + u * 2 * sx, -h2 / 2]],
+            [Math.PI / 2 * r2, (u) => { const a = -Math.PI / 2 + u * Math.PI / 2; return [sx + Math.cos(a) * r2, -sy + Math.sin(a) * r2]; }],
+            [2 * sy, (u) => [w2 / 2, -sy + u * 2 * sy]],
+            [Math.PI / 2 * r2, (u) => { const a = u * Math.PI / 2; return [sx + Math.cos(a) * r2, sy + Math.sin(a) * r2]; }],
+            [2 * sx, (u) => [sx - u * 2 * sx, h2 / 2]],
+            [Math.PI / 2 * r2, (u) => { const a = Math.PI / 2 + u * Math.PI / 2; return [-sx + Math.cos(a) * r2, sy + Math.sin(a) * r2]; }],
+            [2 * sy, (u) => [-w2 / 2, sy - u * 2 * sy]],
+            [Math.PI / 2 * r2, (u) => { const a = Math.PI + u * Math.PI / 2; return [-sx + Math.cos(a) * r2, -sy + Math.sin(a) * r2]; }]
+          ];
+          const total = seg.reduce((q, z) => q + z[0], 0);
+          const N = 160;
+          for (let k = 0; k < N; k++) {
+            let d = (k / N) * total;
+            // tepe ortasından başla
+            d = (d + sx) % total;
+            for (const [len, f] of seg) { if (d <= len || len === 0) { pts.push(f(len ? d / len : 0)); break; } d -= len; }
+          }
+          const dir = idx ? -1 : 1;
+          const at = (u) => pts[((Math.round(u * N) % N) + N) % N];
+          ctx.save();
+          ctx.translate(ex, ey);
+          ctx.lineCap = 'round';
+          const lw = Math.max(2.5, unit * 0.007);
+          ctx.lineWidth = lw;
+          ctx.strokeStyle = `rgba(${rgb},0.16)`;
+          ctx.beginPath(); pts.forEach((q, k) => k ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.closePath(); ctx.stroke();
+          ctx.shadowColor = `rgba(${rgb},0.95)`;
+          let head;
+          // renk geçişi: baş beyaz → göz mavisi → derin mavi-mor → kaybolur
+          const STOPS = [[0, [255, 255, 255, 1]], [0.18, [159, 230, 255, 1]], [0.6, [92, 128, 255, 0.85]], [1, [140, 90, 255, 0]]];
+          const grad = (f) => {
+            for (let z = 1; z < STOPS.length; z++) if (f <= STOPS[z][0]) {
+              const [f0, c0] = STOPS[z - 1], [f1, c1] = STOPS[z], q = (f - f0) / (f1 - f0);
+              return c0.map((v, i) => v + (c1[i] - v) * q);
+            }
+            return STOPS[STOPS.length - 1][1];
+          };
+          const drawTrail = (from, len, steps, fade) => {
+            for (let k = 0; k < steps; k++) {
+              const f = k / steps;
+              const q1 = at(dir * (from - len * f)), q2 = at(dir * (from - len * (f + 1 / steps)));
+              let [r0, g0, b0, a0] = grad(fade ? f : f * 0.6);
+              if (!fade) a0 = Math.max(a0, 0.55);
+              ctx.strokeStyle = `rgba(${r0 | 0},${g0 | 0},${b0 | 0},${a0})`;
+              ctx.shadowColor = `rgba(${r0 | 0},${g0 | 0},${b0 | 0},0.9)`;
+              ctx.shadowBlur = 14 * (1 - f * 0.7);
+              ctx.beginPath(); ctx.moveTo(q1[0], q1[1]); ctx.lineTo(q2[0], q2[1]); ctx.stroke();
+            }
+          };
+          if (known) {
+            // dolu kısım: başlangıçta derin mavi, ilerlemenin ucunda beyaz
+            drawTrail(p, p, Math.max(2, Math.round(p * N)), false);
+            head = at(dir * p);
+          } else {
+            const u0 = reduce ? 0.1 : ((now - t0) / 1600) % 1;
+            drawTrail(u0, 0.42, 90, true);
+            head = at(dir * u0);
+          }
+          ctx.shadowBlur = 22; ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath(); ctx.arc(head[0], head[1], lw * 1.3, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        });
+      } else if (workStyle === 'kod') {
+        // kod dökülmesi: göz şekli aynı kalır, kod sadece gözün içinde yukarıdan aşağı akar
+        const tt = reduce ? 0 : now - t0;
+        eyes.forEach(([ex, eh2, idx]) => {
+          const cols = 5, cw = ew / cols, fs = cw * 0.95, rows = Math.ceil(eh2 / fs) + 3;
+          ctx.save();
+          ctx.font = `700 ${fs}px "Chakra Petch", ui-monospace, monospace`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          // gözün içi: koyu kod yağmuru
+          ctx.save();
+          ctx.beginPath(); ctx.roundRect(ex - ew / 2, ey - eh2 / 2, ew, eh2, Math.min(ew, eh2) * 0.48); ctx.clip();
+          for (let c = 0; c < cols; c++) {
+            const sp = 0.006 + hash(c, idx) * 0.006;           // sütun hızı
+            const pos = tt * sp + hash(idx, c) * rows;          // akan baş (satır cinsinden)
+            const head = pos % (rows + 6);
+            for (let r = 0; r < rows; r++) {
+              const dist = head - r;
+              if (dist < 0 || dist > 7) continue;
+              const a = dist < 1 ? 0.95 : 0.78 - dist * 0.08;
+              ctx.fillStyle = `rgba(3,10,16,${Math.max(0, a)})`;
+              const gch = GLYPHS[Math.floor(hash(c * 13 + idx * 7, r + Math.floor(tt / 140) * (dist < 1 ? 1 : 0)) * GLYPHS.length)];
+              ctx.fillText(gch, ex - ew / 2 + (c + 0.5) * cw, ey - eh2 / 2 + (r + 0.5) * fs);
+            }
+          }
+          ctx.restore();
+          ctx.restore();
+        });
+      }
+      const lbl = known ? 'Çalışıyor · %' + Math.round(p * 100) : 'Çalışıyor';
+      if (statusText.textContent !== lbl) statusText.textContent = lbl;
+    }
+
+    // dans: yükselen müzik notaları
+    if (danceAmt > 0.05) {
+      ctx.save();
+      ctx.fillStyle = `rgb(${rgb})`;
+      ctx.shadowColor = `rgba(${rgb},0.9)`; ctx.shadowBlur = 12;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let i = 0; i < 4; i++) {
+        const p = reduce ? 0.4 : ((now - t0) / 2200 + i * 0.25) % 1;
+        const side = i % 2 ? 1 : -1;
+        const x = W / 2 + side * (gap * 0.95 + Math.sin(p * 6 + i) * unit * 0.03);
+        const y = H * 0.42 + unit * 0.12 - p * unit * 0.38;
+        ctx.globalAlpha = danceAmt * Math.sin(p * Math.PI);
+        ctx.font = `${Math.round(unit * (0.045 + (i % 2) * 0.012))}px "Chakra Petch", system-ui, sans-serif`;
+        ctx.fillText(i % 2 ? '♫' : '♪', x, y);
+      }
+      ctx.restore();
+    }
+
+    // sinyal hatası: yatay dilimler kayıyor, renk ayrışıyor, gözler bir an sönüyor
+    if (s.glitch && !reduce) {
+      const d = Math.min(window.devicePixelRatio || 1, 2);
+      ctx.save(); ctx.setTransform(d, 0, 0, d, 0, 0);
+      if (Math.random() < 0.08) ctx.clearRect(0, 0, W, H);
+      const n = 2 + (Math.random() * 5 | 0);
+      for (let i = 0; i < n; i++) {
+        const sy = cy - unit * 0.14 + Math.random() * unit * 0.28;
+        const sh = 3 + Math.random() * unit * 0.03;
+        const dx = (Math.random() - 0.5) * unit * 0.12;
+        ctx.drawImage(cv, 0, sy * d, cv.width, sh * d, dx, sy, W, sh);
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.35;
+      const off = (Math.random() - 0.5) * unit * 0.02;
+      ctx.drawImage(cv, 0, 0, cv.width, cv.height, off, 0, W, H);
+      ctx.restore();
+      ctx.restore();
+    }
+
+    // sinirli: sağ üst köşede zonklayan anime sinir işareti
+    if (angryAmt > 0.02) {
+      const [ar, ag, ab] = hexToRgb(COL.angry);
+      const pulse = reduce ? 1 : 1 + Math.max(0, Math.sin(now / 160)) * 0.18;
+      const vx = cx + gap / 2 + ew * 0.95, vy = cy - unit * 0.17, vs = unit * 0.035 * pulse * angryAmt;
+      ctx.save();
+      ctx.translate(vx, vy);
+      ctx.strokeStyle = `rgba(${ar},${ag},${ab},${angryAmt})`;
+      ctx.shadowColor = `rgba(${ar},${ag},${ab},0.9)`;
+      ctx.shadowBlur = 16;
+      ctx.lineWidth = Math.max(3, unit * 0.009);
+      ctx.lineCap = 'round';
+      for (let q = 0; q < 4; q++) {
+        ctx.save();
+        ctx.rotate(q * Math.PI / 2 + Math.PI / 4);
+        ctx.beginPath();
+        ctx.arc(vs * 1.15, 0, vs * 0.75, Math.PI * 0.62, Math.PI * 1.38);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    // utanma: yanaklarda pembe çizgiler (///)
+    if (blushAmt > 0.02) {
+      const [pr, pg, pb] = hexToRgb(COL.blush);
+      const flick = reduce ? 1 : 0.85 + Math.sin(now / 240) * 0.15;
+      ctx.save();
+      ctx.strokeStyle = `rgba(${pr},${pg},${pb},${blushAmt * flick})`;
+      ctx.shadowColor = `rgba(${pr},${pg},${pb},0.9)`;
+      ctx.shadowBlur = 14;
+      ctx.lineWidth = Math.max(2, unit * 0.007);
+      ctx.lineCap = 'round';
+      const lh = unit * 0.03, step = unit * 0.026;
+      [-1, 1].forEach(sd => {
+        const bx = cx + sd * (gap / 2 + ew * 0.15), by = cy + unit * 0.115;
+        for (let i = -1; i <= 1; i++) {
+          const x = bx + i * step;
+          ctx.beginPath();
+          ctx.moveTo(x - lh * 0.35, by + lh / 2);
+          ctx.lineTo(x + lh * 0.35, by - lh / 2);
+          ctx.stroke();
+        }
+      });
+      ctx.restore();
+    }
+
+    ctx.restore(); // yüz dönüşümü
+
+    // ince tarama çizgileri (ekran dokusu); masaüstündeki küçük Enki'de yok
+    if (!MINI || document.documentElement.classList.contains('expanded')) {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  controls.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.id === 'wink') { winkL = 1; return; }
+    if (b.id === 'bootBtn') { boot('idle'); return; }
+    if (b.id === 'progBtn') { progressDemo(); return; }
+    if (b.id === 'presBtn') { presentDemo(); return; }
+    if (b.id === 'voiceBtn') { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm' })); return; }
+    if (b.id === 'fs') { (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}); return; }
+    setState(b.dataset.state);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    const map = { '1': 'idle', '2': 'owner', '3': 'stranger', '4': 'listening', '5': 'thinking', '6': 'speaking', '7': 'sleep', '8': 'smug', '9': 'blush', '0': 'angry', 'q': 'laugh', 'Q': 'laugh', 'w': 'surprised', 'W': 'surprised', 'e': 'bored', 'E': 'bored', 'r': 'glitch', 'R': 'glitch', 't': 'love', 'T': 'love', 'y': 'sad', 'Y': 'sad', 'u': 'confused', 'U': 'confused', 'i': 'proud', 'I': 'proud', 'o': 'focus', 'O': 'focus', 'p': 'reminder', 'P': 'reminder', 'a': 'dance', 'A': 'dance' };
+    if (map[e.key]) setState(map[e.key]);
+    else if (e.key === 'h' || e.key === 'H') controls.hidden = !controls.hidden;
+    else if (e.key === 'f' || e.key === 'F') (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {});
+    else if (e.key === ' ') { e.preventDefault(); blink = 1; }
+    else if (e.key === 'z' || e.key === 'Z') winkL = 1;
+    else if (e.key === 'k' || e.key === 'K') progressDemo();
+    else if (e.key === 's' || e.key === 'S') presentDemo();
+    else if (e.key === 'm' || e.key === 'M') {
+      voiceOn = !voiceOn; if (!voiceOn && synth) synth.cancel();
+      try { localStorage.setItem('enkiVoiceOn', voiceOn ? '1' : '0'); } catch (_) {}
+      say(voiceInfo()); talkUntil = 0;
+    }
+    else if (e.key === 'n' || e.key === 'N') {
+      loadVoices(); if (voices.length) voiceIdx = (voiceIdx + 1) % voices.length;
+      try { localStorage.setItem('enkiVoiceIdx', String(voiceIdx)); } catch (_) {}
+      voiceOn = true; say(voiceInfo()); talkUntil = 0; speak('Merhaba. Bu sesim nasıl?', true);
+    }
+    else if (e.key === 'Escape' && pres.on) { demoSteps.forEach(clearTimeout); unpresent(); }
+    else if (e.key === 'v' || e.key === 'V') {
+      workStyle = WORK_STYLES[(WORK_STYLES.indexOf(workStyle) + 1) % WORK_STYLES.length];
+      try { localStorage.setItem('enkiWork3', workStyle); } catch (_) {}
+      if (state !== 'focus') setState('focus');
+      say('Çalışma animasyonu: ' + WORK_NAMES[workStyle]); talkUntil = 0;
+    }
+    else if (e.key === 'b' || e.key === 'B') boot('idle');
+    else if (e.key === 'Enter' && state === 'boot') bootDone(); // Python olmadan elle aç
+  });
+
+  // sayfa açılınca açılış animasyonuyla başlar
+  if (reduce) setState('idle'); else boot('idle');
+})();
+</script>

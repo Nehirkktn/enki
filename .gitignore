@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.bak
+
+# Sırlar: asla commit'leme
+.env
+*.key
+
+# Kişisel veri: Enki'nin hafızası ve yüz kaydı
+enki.db
+enki.db-*
+*.npz
+
+# Büyük ikili dosyalar (indirilebilir modeller, ses örnekleri)
+models/
+voices/
+*.onnx
+*.mp3
+*.wav
+
+# macOS
+.DS_Store
