@@ -118,14 +118,14 @@ DUYGU_GUCLU = {  # aynı yön, yaklaşık iki kat doz
 
 # TON: aynı kişi, sadece tonlama. Perde SABİT (perde değişince ses başka biri gibi geliyor).
 # (hız farkı %, ses yüksekliği farkı %, parçalar arası duraklama ms)
-TON = {  # duraklama = parçaların kenar sessizliği kırpıldıktan SONRA eklenen boşluk
-    "neutral": (0,   0,   40),
-    "excited": (+12, +15, 0),     # hızlı, yüksek, nefes almadan
-    "smug":    (-4,  -5,  60),    # hafif yavaş, kısık (-10 ağır çekim gibiydi)
-    "laugh":   (+6,  +8,  20),    # A: sadece oyuncu ton
-    "laugh_heh": (+6, +8, 0),     # B: başına kısa bir "heh"
-    "blush":   (-6,  -12, 60),    # utangaç: yavaş, kısık
-    "stern":   (-7,  +10, 70),    # sert: hafif yavaş, net (-15 ağır çekim gibiydi)
+TON = {  # hız: hepsi tabanda (gülmenin hızı beğenildi); duygu ses yüksekliği, duraklama ve konturdan
+    "neutral":   (0,  0,   40),
+    "excited":   (+3, +15, 0),    # yüksek, nefes almadan; hızda çok küçük artış
+    "smug":      (0,  -5,  60),   # kısık, kısa duraklama
+    "laugh":     (0,  +8,  20),   # A: sadece oyuncu ton
+    "laugh_heh": (0,  +8,  0),    # B: başına kısa bir "heh"
+    "blush":     (0,  -12, 60),   # utangaç: kısık
+    "stern":     (0,  +10, 70),   # sert: net, yüksek
 }
 KONTUR_HZ = 3  # cümle içi iniş-çıkış: ±3 Hz (kimliği değiştirmeyecek kadar küçük)
 
@@ -271,7 +271,7 @@ def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None, taba
         for i, (tag, line) in enumerate(SAHNE, 1):
             if sadece and not any(tag.startswith(x) for x in sadece):
                 continue
-            wav = out / f"{mod}{'5' if kontur == 'ton' else ''}_{i}.wav"
+            wav = out / f"{mod}{'6' if kontur == 'ton' else ''}_{i}.wav"
             if kontur == "ton":
                 ok = _render_ton(wav, hiz, perde, efekt, line, tag)
             else:
