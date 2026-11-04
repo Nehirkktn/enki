@@ -9,6 +9,7 @@
   ~/.venv/bin/python tools/ses_dinle.py x          # 3. tur: genç + enerjik + parlak (X1–X6)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6          # aynı konuşma: düz vs TON (aynı kişi, tonlamalı)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
+  ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -120,9 +121,10 @@ TON = {  # duraklama = parçaların kenar sessizliği kırpıldıktan SONRA ekle
     "neutral": (0,   0,   40),
     "excited": (+12, +15, 0),     # hızlı, yüksek, nefes almadan
     "smug":    (-10, -5,  90),    # yavaş, kısık, kısa dramatik duraklama
-    "laugh":   (+8,  +5,  20),
+    "laugh":   (+6,  +8,  20),    # A: sadece oyuncu ton
+    "laugh_heh": (+6, +8, 0),     # B: başına kısa bir "heh"
     "blush":   (-6,  -12, 60),    # utangaç: yavaş, kısık
-    "stern":   (-15, +10, 110),   # sert: yavaş, net
+    "stern":   (-7,  +10, 70),    # sert: hafif yavaş, net (-15 ağır çekim gibiydi)
 }
 KONTUR_HZ = 3  # cümle içi iniş-çıkış: ±3 Hz (kimliği değiştirmeyecek kadar küçük)
 
@@ -131,6 +133,7 @@ SAHNE = [  # küçük bir konuşma: aynı ses, cümle cümle farklı duygu
     ("smug",    "Tabii ilk denemede değil. Üçüncü denemede. Ama saymıyorum."),
     ("blush",   "Ne? Beni mi övdün az önce? Kaydettim bunu, geri alamazsın."),
     ("laugh",   "Şaka şaka. Ama hafızama yazdım, gerçekten."),
+    ("laugh_heh", "Heh. Şaka şaka. Ama hafızama yazdım, gerçekten."),
     ("stern",   "Şimdi ciddi bir şey söyleyeceğim. Lineer cebir vizesi cuma."),
 ]
 
@@ -256,7 +259,7 @@ MODLAR = {
 }
 
 
-def duygu(base_key: str, modlar: list[str]) -> None:
+def duygu(base_key: str, modlar: list[str], sadece: set[str] | None = None) -> None:
     _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
     out = ROOT / "voices" / "aday" / "duygu" / base_key
     out.mkdir(parents=True, exist_ok=True)
@@ -264,11 +267,13 @@ def duygu(base_key: str, modlar: list[str]) -> None:
         baslik, tablo, kontur = MODLAR[mod]
         print(f"\n▶ {baslik}   taban: {base_key}")
         for i, (tag, line) in enumerate(SAHNE, 1):
-            wav = out / f"{mod}{'3' if kontur == 'ton' else ''}_{i}.wav"
+            if sadece and not any(tag.startswith(x) for x in sadece):
+                continue
+            wav = out / f"{mod}{'4' if kontur == 'ton' else ''}_{i}.wav"
             if kontur == "ton":
                 ok = _render_ton(wav, hiz, perde, efekt, line, tag)
             else:
-                dr, dp = tablo[tag] if tablo else (0, 0)
+                dr, dp = tablo.get(tag, tablo.get("laugh", (0, 0))) if tablo else (0, 0)
                 h, p = _shift(hiz, dr, "%"), _shift(perde, dp, "Hz")
                 ok = _render_konturlu(wav, h, p, efekt, line) if kontur else render(wav, AHMET, h, p, efekt, line)
             if not ok:
@@ -339,7 +344,8 @@ def main() -> None:
         rest = args[1:]
         base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
         modlar = [a.lower() for a in rest if a.lower() in MODLAR] or ["duz", "ton"]
-        duygu(base, modlar)
+        sadece = {a.lower() for a in rest if a.lower() in {"excited", "smug", "laugh", "blush", "stern"}}
+        duygu(base, modlar, sadece or None)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
