@@ -467,7 +467,8 @@ def _uydur(kaynak: pathlib.Path, hedef: pathlib.Path, params, hedef_rms: float,
     if perde_orani != 1.0:
         pcm = _hizlandir(pcm, perde_orani)
     rms = float(np.sqrt(np.mean(pcm ** 2))) or 1.0
-    _wav_yaz(hedef, np.clip(pcm * (hedef_rms / rms) * 0.9, -32000, 32000), params)
+    kazanc = min(hedef_rms / rms * 0.9, 0.8 * 32767 / (float(np.abs(pcm).max()) or 1.0))
+    _wav_yaz(hedef, np.clip(pcm * kazanc, -32000, 32000), params)
     ham.unlink()
     T.apply_effect(hedef, efekt)
     return hedef

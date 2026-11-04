@@ -253,7 +253,10 @@ class EnkiVoice:
             log.warning("gülme kaydı yok: %s/%s", self.laughs.root, kind)
             return None
         x = trim(read_wav(f), threshold=300, pad_ms=30).astype(np.float32)
-        return fade(x * (target_rms / (rms(x) or 1.0)) * 0.9)
+        peak = float(np.abs(x).max()) or 1.0
+        # aralarında sessizlik olan kıkırdamalarda RMS düşük çıkar; sadece RMS'e göre büyütmek patlatır
+        gain = min(target_rms / (rms(x) or 1.0) * 0.9, 0.8 * 32767 / peak)
+        return fade(x * gain)
 
     async def render(self, text: str) -> np.ndarray | None:
         segs = segments(text)
