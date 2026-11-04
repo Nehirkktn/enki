@@ -11,6 +11,7 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
   ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
+  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G6), cümleyle birlikte
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -250,6 +251,84 @@ def _render_konturlu(wav: pathlib.Path, hiz: str, perde: str, efekt: str | None,
     return True
 
 
+# ---------------------------------------------------------------- gülme sesi adayları
+# Metin adayları: Ahmet'in kendisi okuyor. Sentez adayları: tek bir "ha" hecesinden DSP ile kıkırdama.
+GULME_METIN = {
+    "G1": ("Heh heh.", "+20%"),
+    "G2": ("Hı hı hı.", "+25%"),
+    "G3": ("Ha ha!", "+15%"),
+    "G4": ("Hah!", "+10%"),
+}
+
+
+def _wav_oku(path: pathlib.Path):
+    import wave
+    import numpy as np
+    with wave.open(str(path), "rb") as r:
+        return np.frombuffer(r.readframes(r.getnframes()), np.int16), r.getparams()
+
+
+def _wav_yaz(path: pathlib.Path, pcm, params) -> None:
+    import wave
+    with wave.open(str(path), "wb") as w:
+        w.setparams(params)
+        w.writeframes(pcm.astype("int16").tobytes())
+
+
+def _hizlandir(pcm, oran: float):
+    """Yeniden örnekleme: oran>1 hem hızlandırır hem tizleştirir (kısa hecede doğal kıkırdama etkisi)."""
+    import numpy as np
+    n = int(len(pcm) / oran)
+    return np.interp(np.linspace(0, len(pcm) - 1, n), np.arange(len(pcm)), pcm.astype(np.float32))
+
+
+def _kikirdama(out: pathlib.Path, hiz: str, perde: str, robot: bool) -> pathlib.Path | None:
+    """'ha' hecesini 3 kez, her seferinde biraz daha kısa/alçak ve sessizleşerek dizer: ha-ha-ha düşüşü."""
+    import numpy as np
+    hece = out / "hece_ha.wav"
+    if not render(hece, AHMET, hiz, perde, None, "Ha."):
+        return None
+    pcm, params = _wav_oku(hece)
+    sr = params.framerate
+    pcm = _kirp(pcm, sr, pay_ms=5)[: int(sr * 0.22)].astype(np.float32)   # tek kısa hece
+    fade = int(sr * 0.03)
+    pcm[-fade:] *= np.linspace(1, 0, fade)
+    parca = []
+    for k, (oran, kazanc) in enumerate([(1.12, 1.0), (1.0, 0.8), (0.92, 0.6)]):
+        parca.append(_hizlandir(pcm, oran) * kazanc)
+        parca.append(np.zeros(int(sr * 0.06), np.float32))
+    son = out / f"kikirdama{'_robot' if robot else ''}.wav"
+    _wav_yaz(son, np.concatenate(parca), params)
+    T.apply_effect(son, "robot_hafif" if robot else "jarvis")
+    return son
+
+
+def gulme(base_key: str, taban_hiz: str | None) -> None:
+    _, hiz, perde, efekt = IZGARA_X.get(base_key, IZGARA_X["X1"])
+    hiz = taban_hiz or hiz
+    out = ROOT / "voices" / "aday" / "gulme"
+    out.mkdir(parents=True, exist_ok=True)
+    tag, cumle = next(x for x in SAHNE if x[0] == "laugh")
+    govde = out / f"cumle_{hiz}.wav"
+    if not _render_ton(govde, hiz, perde, efekt, cumle, tag):
+        return
+    adaylar_ = []
+    for kod, (metin, h) in GULME_METIN.items():
+        w = out / f"{kod}.wav"
+        if render(w, AHMET, h, perde, efekt, metin):
+            adaylar_.append((kod, f"metin: {metin}", w))
+    for kod, robot in (("G5", False), ("G6", True)):
+        w = _kikirdama(out, hiz, perde, robot)
+        if w:
+            adaylar_.append((kod, "sentez kıkırdama" + (" + hafif robot" if robot else ""), w))
+    for kod, etiket, w in adaylar_:
+        print(f"\n▶ {kod}  {etiket}")
+        birlesik = out / f"{kod}_cumle.wav"
+        _birlestir([w, govde], birlesik, ara_ms=90)
+        subprocess.run(["afplay", str(birlesik)])
+    print(f"\nDosyalar: {out}")
+
+
 MODLAR = {
     "duz":     ("DÜZ (her cümle aynı ton)", None, False),
     "duygulu": ("DUYGULU (cümle cümle ton, hafif)", DUYGU, False),
@@ -355,6 +434,12 @@ def main() -> None:
         import re
         hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
         duygu(base, modlar, sadece or None, f"{int(hz):+d}%" if hz is not None else None)
+    elif mode == "gulme":
+        import re
+        rest = args[1:]
+        base = next((a.upper() for a in rest if a.upper() in IZGARA_X), "X1")
+        hz = next((m.group(1) for a in rest if (m := re.fullmatch(r"hiz([+-]?\d+)", a.lower()))), None)
+        gulme(base, f"{int(hz):+d}%" if hz is not None else None)
     elif mode == "x":
         izgara({a.upper() for a in args[1:]}, IZGARA_X, [1, 2])
     else:
