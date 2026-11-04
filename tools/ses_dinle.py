@@ -11,7 +11,7 @@
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton      # sadece ton (modlar: duz, ton, duygulu, guclu)
   ~/.venv/bin/python tools/ses_dinle.py duygu X6 ton laugh stern   # sadece bu duyguların cümleleri
   ~/.venv/bin/python tools/ses_dinle.py duygu X1 ton hiz+4          # taban hızını değiştir (X1'de +13)
-  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G12), cümleyle birlikte; sonuna G10 G11 yazarsan sadece onlar
+  ~/.venv/bin/python tools/ses_dinle.py gulme X1 hiz+6              # gülme sesi adayları (G1–G15), cümleyle birlikte; sonuna G13 G14 yazarsan sadece onlar
 
 robot_vision_v2'nin ses motorunu (edge-tts + efektler) kullanır; ~/.venv içinde zaten kurulu.
 """
@@ -303,12 +303,12 @@ def _kikirdama(out: pathlib.Path, hiz: str, perde: str, robot: bool) -> pathlib.
     return son
 
 
-def _nefes(sr: int, ms: int = 260, seviye: float = 900.0):
+def _nefes(sr: int, ms: int = 260, seviye: float = 900.0, yumusaklik: float = 0.85):
     """Gülmenin sonundaki burundan nefes: alçak geçirgen gürültü, yumuşak zarf."""
     import numpy as np
     n = int(sr * ms / 1000)
     g = np.random.default_rng(7).normal(0, 1, n).astype(np.float32)
-    g = T._one_pole(g, 0.85)                      # hışırtıyı yumuşat
+    g = T._one_pole(g, yumusaklik)                # hışırtıyı yumuşat (düşük değer = daha "h" gibi)
     zarf = np.sin(np.linspace(0, np.pi, n)) ** 2
     return g / (np.abs(g).max() or 1) * seviye * zarf
 
@@ -316,7 +316,8 @@ def _nefes(sr: int, ms: int = 260, seviye: float = 900.0):
 def _uzun_kikirdama(out: pathlib.Path, hiz: str, perde: str, ad: str, hece_metni: str,
                     adim: int, hece_ms: int, ara_ms: int, efekt: str,
                     sonum: float = 0.55, perde_dusus: float = 0.22, yavaslama: float = 0.6,
-                    ara_nefes: bool = False, oynaklik: float = 0.03) -> pathlib.Path | None:
+                    ara_nefes: bool = False, oynaklik: float = 0.03, h_sesi: bool = False,
+                    zikzak: float = 0.0) -> pathlib.Path | None:
     """Daha uzun, insansı kıkırdama: hece sayısı, ritim düzensizliği, sönümlenme ve sonda nefes."""
     import numpy as np
     hece = out / f"hece_{hece_metni.strip('.').lower()}.wav"
@@ -332,12 +333,17 @@ def _uzun_kikirdama(out: pathlib.Path, hiz: str, perde: str, ad: str, hece_metni
     for k in range(adim):
         t = k / max(adim - 1, 1)
         oran = 1.05 - perde_dusus * t + rng.uniform(-oynaklik, oynaklik)   # her hece biraz farklı
+        oran += zikzak * (1 if k % 2 == 0 else -1)                         # gülmede perde iner-çıkar
         kazanc = (1.0 - sonum * t) * rng.uniform(0.88, 1.0)
         hece_k = _hizlandir(pcm, oran) * kazanc
         if oynaklik > 0.03:  # hece uzunluğu da oynasın: insan her "ha"yı aynı uzunlukta söylemez
             hece_k = hece_k[: int(len(hece_k) * rng.uniform(0.8, 1.0))]
             f = min(int(sr * 0.02), len(hece_k) // 4)
             hece_k[-f:] *= np.linspace(1, 0, f)
+        if h_sesi:  # "ha"nın baştaki h'si: kırpmada kayboluyordu, o yüzden "a a a" gibi duyuluyordu
+            hh = _nefes(sr, ms=55, seviye=1500.0 * kazanc, yumusaklik=0.35)
+            hh[-int(sr * 0.01):] *= 0.5
+            parca.append(hh)
         parca.append(hece_k)
         bosluk = ara_ms * (1 + yavaslama * t) * rng.uniform(0.8, 1.2)
         if ara_nefes and k in (1, adim - 2):  # arada kısa nefes alış: gülerken hava çekmek
@@ -379,6 +385,12 @@ def gulme(base_key: str, taban_hiz: str | None, sadece: set[str] | None = None) 
         ("G10", "G7 sönmeden, daha doğal oynaklık",            "Ha.", 5, 240, 115, "jarvis", sonmeyen),
         ("G11", "G8 sönmeden ('he-he' kıkırdama)",             "He.", 6, 170, 85,  "jarvis", sonmeyen),
         ("G12", "G10 + arada kısa nefes alışlar",              "Ha.", 5, 240, 115, "jarvis", {**sonmeyen, "ara_nefes": True}),
+    ]
+    nefesli = dict(sonum=0.15, perde_dusus=0.05, yavaslama=0.1, oynaklik=0.05, h_sesi=True, zikzak=0.05)
+    uzunlar += [  # her hecenin başında duyulur bir "h", kısa ünlüler, iner-çıkar perde
+        ("G13", "h'li 'ha-ha-ha', kısa ve kesik",              "Ha.", 5, 150, 70,  "jarvis", nefesli),
+        ("G14", "h'li 'he-he-he' kıkırdama",                    "He.", 6, 130, 60,  "jarvis", nefesli),
+        ("G15", "G13 + ortada nefes alış",                      "Ha.", 6, 150, 70,  "jarvis", {**nefesli, "ara_nefes": True}),
     ]
     for kod, etiket, hece_metni, adim, hms, ams, ef, *ek in uzunlar:
         w = _uzun_kikirdama(out, hiz, perde, kod, hece_metni, adim, hms, ams, ef, **(ek[0] if ek else {}))
