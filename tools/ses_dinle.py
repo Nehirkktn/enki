@@ -28,7 +28,14 @@ ADAYLAR = [
     ("3  Ahmet + robot efekti",          "tr-TR-AhmetNeural", "-8%",  "-6Hz", "robot"),
     ("4  Ahmet, yavaş + Baymax efekti",  "tr-TR-AhmetNeural", "-18%", "+2Hz", "baymax"),
     ("5  Emel (kadın), düz",             "tr-TR-EmelNeural",  "+0%",  "+0Hz", None),
-    ("6  Piper (internetsiz)",           None,                None,   None,   None),
+    ("6  Piper DFKI (internetsiz)",      None,                None,   None,   None),
+    # Microsoft'un çok dilli sesleri: aynı ücretsiz motor, Türkçeyi hafif yabancı aksanla okur
+    ("7  Andrew (çok dilli, erkek)",     "en-US-AndrewMultilingualNeural", "-5%", "+0Hz", None),
+    ("8  Brian (çok dilli, erkek)",      "en-US-BrianMultilingualNeural",  "-5%", "+0Hz", None),
+    ("9  Andrew + JARVIS efekti",        "en-US-AndrewMultilingualNeural", "-5%", "+0Hz", "jarvis"),
+    # Diğer internetsiz Türkçe Piper sesleri (ilk seferde ~60 MB indirir, piper-tts gerekir)
+    ("10 Piper Fahrettin (internetsiz)", "piper:tr_TR-fahrettin-medium", None, None, None),
+    ("11 Piper Fettah (internetsiz)",    "piper:tr_TR-fettah-medium",    None, None, None),
 ]
 
 
@@ -49,8 +56,14 @@ def main() -> None:
                 wav = out / f"{i}_{n}.wav"
                 if not wav.exists():
                     try:
-                        EdgeEngine(ses, rate=hiz, pitch=perde).render(line, wav)
+                        if ses.startswith("piper:"):
+                            from robot.tts import PiperEngine
+                            PiperEngine(ses[6:], models_dir=ROOT / "models" / "piper").render(line, wav)
+                        else:
+                            EdgeEngine(ses, rate=hiz, pitch=perde).render(line, wav)
                         apply_effect(wav, efekt)
+                    except ImportError:
+                        print("   piper-tts kurulu değil: ~/.venv/bin/pip install piper-tts"); break
                     except Exception as e:
                         print(f"   üretilemedi: {e}"); break
             print(f"   {n}. {line[:60]}...")
