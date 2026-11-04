@@ -29,7 +29,7 @@ def test_contour_question_rises_statement_falls():
 
 def test_laugh_picker_no_back_to_back_repeat(tmp_path):
     (tmp_path / "kisa").mkdir()
-    for n in ("a", "b"):
+    for n in ("a", "b", "c"):
         (tmp_path / "kisa" / f"{n}.wav").write_bytes(b"")
     p = LaughPicker(tmp_path, random.Random(0))
     picks = [p.pick("kisa").name for _ in range(10)]

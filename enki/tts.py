@@ -107,7 +107,8 @@ class LaughPicker:
         files = sorted((self.root / kind).glob("*.wav"))
         if not files:
             return None
-        choices = [f for f in files if f != self.last.get(kind)] or files
+        # 3+ kayıtta aynısını üst üste çalma; 2 kayıtta bu kural sırayla çalmaya dönüşür, o yüzden tamamen rastgele
+        choices = [f for f in files if f != self.last.get(kind)] if len(files) > 2 else files
         self.last[kind] = f = self.rng.choice(choices)
         return f
 
