@@ -24,19 +24,29 @@ log = logging.getLogger("enki.brain")
 
 
 # ---------- events ----------
+# `body`: which body the event came from (konsol, mac, telefon, oda-1...). One mind, many bodies.
 @dataclass(frozen=True, slots=True)
 class UserSaid:
     text: str
+    body: str = "konsol"
 
 
 @dataclass(frozen=True, slots=True)
 class Overheard:  # speech without the wake word: she's talking to herself
     text: str
+    body: str = "konsol"
 
 
 @dataclass(frozen=True, slots=True)
 class FaceSeen:
     who: str = "nehir"
+    body: str = "mac"
+
+
+@dataclass(frozen=True, slots=True)
+class FaceLeft:
+    who: str = "nehir"
+    body: str = "mac"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +59,7 @@ class Shutdown:
     pass
 
 
-Event = UserSaid | Overheard | FaceSeen | Tick | Shutdown
+Event = UserSaid | Overheard | FaceSeen | FaceLeft | Tick | Shutdown
 
 
 class Speaker(Protocol):
@@ -100,11 +110,22 @@ class Brain:
         self.initiative = Initiative(cfg, rng=self.rng)
         self.events: asyncio.Queue[Event] = asyncio.Queue()
         self._last_interject = 0.0
+        self.active_body = "konsol"   # the body Nehir last spoke through; replies go there
+        self.present: set[str] = set()  # bodies whose camera currently sees Nehir
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def post(self, ev: Event) -> None:
         self.events.put_nowait(ev)
 
+    def post_threadsafe(self, ev: Event) -> None:
+        """For sense threads (camera, mic). Safe to call before run(): queued until the loop exists."""
+        if self._loop is None:
+            self.events.put_nowait(ev)
+        else:
+            self._loop.call_soon_threadsafe(self.events.put_nowait, ev)
+
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
         ticker = asyncio.create_task(self._ticker())
         try:
             while True:
@@ -127,7 +148,8 @@ class Brain:
 
     async def _handle(self, ev: Event) -> None:
         match ev:
-            case UserSaid(text):
+            case UserSaid(text, body):
+                self.active_body = body
                 self.initiative.on_user_spoke()
                 self.fsm.fire(Sigma.WAKE)
                 self.fsm.fire(Sigma.HEARD)
@@ -138,7 +160,12 @@ class Brain:
                     return
                 self.fsm.fire(Sigma.INITIATE)
                 await self._turn(user_text=f"[ARAYA_GIR] {text}", store_as=None)
-            case FaceSeen():
+            case FaceLeft(_, body):
+                self.present.discard(body)
+            case FaceSeen(who, body):
+                if who != "nehir":
+                    return
+                self.present.add(body)
                 if self.fsm.q is Q.IDLE and (reason := self.initiative.should_greet()):
                     await self._initiate(reason)
             case Tick():
@@ -166,7 +193,8 @@ class Brain:
         if store_as is not None:
             self.mem.add_turn("user", store_as)
 
-        context = persona.dynamic_context(self.mem.facts(), recalled, datetime.now())
+        context = persona.dynamic_context(self.mem.facts(), recalled, datetime.now(),
+                                          body=self.active_body, present=sorted(self.present))
         raw = await self.llm.complete(persona.CORE, context, to_messages(recent, user_text))
         reply = parse_reply(raw)
 

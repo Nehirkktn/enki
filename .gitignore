@@ -24,3 +24,6 @@ voices/
 # macOS
 .DS_Store
 *.command
+
+# Gövde anahtarı (telefon linkindeki ?k=)
+data/govde_anahtari

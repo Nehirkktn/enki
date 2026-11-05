@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#05070a">
+<title>Enki</title>
+<style>
+  :root { --c: #6fe3ff; --glow: rgba(111,227,255,.55); }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: #05070a; color: #cfe9f2; font: 16px/1.4 -apple-system, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 16px calc(12px + env(safe-area-inset-bottom)); }
+  #status { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; opacity: .45; text-align: center; padding-top: 10px; }
+  #face { flex: 1; display: flex; align-items: center; justify-content: center; gap: 14vw; }
+  .eye { width: 17vw; max-width: 90px; height: 30vw; max-height: 160px; border-radius: 40% / 30%;
+         background: var(--c); box-shadow: 0 0 24px var(--glow), 0 0 60px var(--glow);
+         transition: height .18s, border-radius .25s, transform .25s, background .3s; position: relative; }
+  .eye::after { content: ""; position: absolute; left: -30%; right: -30%; bottom: -55%; height: 30%;
+                border-radius: 50%; background: #ff6fa8; opacity: 0; filter: blur(8px); transition: opacity .3s; }
+  .blink .eye { height: 6px !important; }
+  .listening .eye { transform: scale(1.08); }
+  .thinking .eye { height: 14vw; border-radius: 50%; animation: think 1s infinite alternate ease-in-out; }
+  .speaking .eye { animation: talk .35s infinite alternate; }
+  .smug .eye { height: 13vw; border-radius: 50% 50% 40% 40% / 20% 20% 80% 80%; }
+  .smug .eye:last-child { transform: translateY(-4vw); }
+  .laugh .eye { height: 9vw; border-radius: 50% 50% 0 0 / 100% 100% 0 0; animation: talk .2s infinite alternate; }
+  .blush .eye::after { opacity: .7; }  .love { --c: #ff8fbf; --glow: rgba(255,111,168,.6); }
+  .love .eye::after { opacity: .8; }
+  .angry { --c: #ff6f6f; --glow: rgba(255,90,90,.55); }
+  .angry .eye:first-child { border-radius: 30% 70% 40% 40%; transform: rotate(12deg); }
+  .angry .eye:last-child  { border-radius: 70% 30% 40% 40%; transform: rotate(-12deg); }
+  .proud .eye { height: 12vw; border-radius: 20% 20% 50% 50%; }
+  .surprised .eye { height: 34vw; border-radius: 50%; }
+  .sad { --c: #7f9cff; --glow: rgba(110,140,255,.5); }  .sad .eye { height: 20vw; transform: translateY(4vw); }
+  .confused .eye:first-child { height: 12vw; }  .bored .eye { height: 8vw; }
+  .sleep .eye { height: 5px; opacity: .4; }
+  .owner .eye { transform: scale(1.05); }  .stranger { --c: #ffc46f; --glow: rgba(255,196,111,.5); }
+  .glitch .eye { animation: glitch .15s infinite; }
+  @keyframes think { to { transform: translateY(-3vw); } }
+  @keyframes talk { to { transform: scaleY(.85); } }
+  @keyframes glitch { 50% { transform: translateX(3px) skewX(8deg); opacity: .6; } }
+  #sub { min-height: 3.2em; text-align: center; font-size: 17px; padding: 0 6px 14px; opacity: .9; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; background: #0d1218; border: 1px solid #1c2733; color: inherit; border-radius: 22px;
+          padding: 12px 16px; font-size: 16px; outline: none; }
+  input:focus { border-color: var(--c); }
+  button { background: var(--c); color: #05070a; border: 0; border-radius: 22px; padding: 0 18px; font-weight: 600; font-size: 15px; }
+  #wake { position: fixed; inset: 0; background: rgba(5,7,10,.92); display: flex; align-items: center; justify-content: center;
+          flex-direction: column; gap: 10px; font-size: 15px; z-index: 9; }
+  #wake b { color: var(--c); font-size: 22px; letter-spacing: .1em; }
+</style>
+</head>
+<body>
+<div id="wake"><b>ENKİ</b><span>Uyandırmak için dokun</span></div>
+<div id="status">bağlanıyor…</div>
+<div id="face" class="idle"><div class="eye"></div><div class="eye"></div></div>
+<div id="sub"></div>
+<form id="f"><input id="t" placeholder="Enki'ye yaz…" autocomplete="off" enterkeyhint="send"><button>Gönder</button></form>
+<script>
+const key = new URLSearchParams(location.search).get('k') || localStorage.getItem('enki_k') || '';
+try { if (key) localStorage.setItem('enki_k', key); } catch (_) {}
+const face = document.getElementById('face'), sub = document.getElementById('sub'), st = document.getElementById('status');
+let ws, state = 'idle', player = new Audio();
+
+function setState(s, text) {
+  state = s || 'idle';
+  face.className = state;
+  if (text) sub.textContent = text;
+}
+setInterval(() => {  // göz kırpma
+  if (['idle', 'listening', 'owner', 'speaking'].includes(state) && Math.random() < .35) {
+    face.classList.add('blink'); setTimeout(() => face.classList.remove('blink'), 140);
+  }
+}, 1600);
+
+function connect() {
+  ws = new WebSocket(`ws://${location.hostname}:8765`);
+  ws.onopen = () => ws.send(JSON.stringify({hello: {body: 'telefon', caps: ['face', 'text', 'speaker'], key}}));
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (m.welcome) { st.textContent = 'bağlı · ' + m.welcome.bodies.join(' · '); return; }
+    if (m.say !== undefined) {
+      sub.textContent = m.say;
+      if (m.audio) { player.src = 'data:audio/wav;base64,' + m.audio; player.play().catch(() => {}); }
+      return;
+    }
+    if (m.state) setState(m.state, m.text);
+  };
+  ws.onclose = () => { st.textContent = key ? 'bağlantı yok · tekrar deniyor' : 'anahtar yok: linki Enki terminalinden aç'; setState('sleep'); setTimeout(connect, 2000); };
+}
+
+document.getElementById('wake').onclick = (e) => {
+  // mobil tarayıcılar sesi ancak bir dokunuştan sonra çalar: sessiz bir çalma ile kilidi aç
+  player.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+  player.play().catch(() => {});
+  e.currentTarget.remove();
+};
+document.getElementById('f').onsubmit = (e) => {
+  e.preventDefault();
+  const t = document.getElementById('t'), v = t.value.trim();
+  if (!v || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({said: v}));
+  sub.textContent = '› ' + v; t.value = '';
+};
+connect();
+</script>
+</body>
+</html>

@@ -3,3 +3,12 @@ httpx>=0.27
 numpy>=1.26
 pytest>=8
 edge-tts>=6.1
+# gövde merkezi (telefon, yüz ekranı)
+websockets>=12
+# göz: kamera + yüz tanıma
+opencv-python>=4.8
+# kulak: mikrofon + Whisper
+sounddevice>=0.5
+webrtcvad-wheels>=2.0
+faster-whisper>=1.1
+mlx-whisper>=0.4; sys_platform == "darwin" and platform_machine == "arm64"
