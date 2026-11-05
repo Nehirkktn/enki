@@ -31,6 +31,8 @@ VOICE = os.getenv("ENKI_SES", "tr-TR-AhmetNeural")
 BASE_RATE = int(os.getenv("ENKI_SES_HIZ", "6"))      # %   (gülmenin hızı: hepsi bu hızda)
 BASE_PITCH = int(os.getenv("ENKI_SES_PERDE", "10"))  # Hz  (genç, parlak)
 EFFECT = os.getenv("ENKI_SES_EFEKT", "jarvis") or None
+GULME = os.getenv("ENKI_GULME", "1") != "0"                  # 0 = gülme kayıtları hiç çalmaz
+GULME_EFEKT = os.getenv("ENKI_GULME_EFEKT", "0") == "1"      # 1 = efekt gülmeye de uygulanır (eski davranış)
 GULME_DIR = pathlib.Path(os.getenv("ENKI_GULME_DIR", pathlib.Path(__file__).resolve().parents[1] / "voices" / "gulme"))
 
 # duygu: (hız farkı %, ses gücü farkı %, aynı duygudaki cümleler arası duraklama ms)
@@ -160,17 +162,25 @@ def _reflections(x, taps_ms, decay):
     return y
 
 
-def jarvis(pcm: np.ndarray) -> np.ndarray:
-    """'Duvarlardaki yapay zekâ' parlaklığı: presence + hafif chorus + küçük oda (robot_vision_v2 ile aynı)."""
-    x = pcm.astype(np.float32) / 32768.0
+def _jarvis_f(x: np.ndarray) -> np.ndarray:
+    """float [-1,1] → float, normalize etmeden (parça parça uygulanabilsin diye)."""
     x = x + 0.35 * (x - _one_pole(x, 0.92))
     x = _chorus(x, 12, 1.5, 0.6, 0.22)
-    x = _reflections(x, (23, 41, 67, 97), 0.38)
-    x /= max(1.0, float(np.abs(x).max()) / 0.95)
+    return _reflections(x, (23, 41, 67, 97), 0.38)
+
+
+def _normalize(x: np.ndarray) -> np.ndarray:
+    x = x / max(1.0, float(np.abs(x).max()) / 0.95)
     return (x * 32767).astype(np.int16)
 
 
+def jarvis(pcm: np.ndarray) -> np.ndarray:
+    """'Duvarlardaki yapay zekâ' parlaklığı: presence + hafif chorus + küçük oda (robot_vision_v2 ile aynı)."""
+    return _normalize(_jarvis_f(pcm.astype(np.float32) / 32768.0))
+
+
 EFFECTS = {"jarvis": jarvis}
+EFFECTS_F = {"jarvis": _jarvis_f}
 
 
 def apply_effect(pcm: np.ndarray, effect: str | None = EFFECT) -> np.ndarray:
@@ -230,8 +240,10 @@ async def edge_pcm(text: str, rate: int, pitch: int, volume: int) -> np.ndarray:
 class EnkiVoice:
     """Cevabı parçalara ayırır, konuşma parçalarını paralel üretir, gülmeleri araya koyar, tek dosya çalar."""
 
-    def __init__(self, synth=edge_pcm, laughs: LaughPicker | None = None, effect: str | None = EFFECT):
+    def __init__(self, synth=edge_pcm, laughs: LaughPicker | None = None, effect: str | None = EFFECT,
+                 laugh_on: bool = GULME, laugh_effect: bool = GULME_EFEKT):
         self.synth, self.laughs, self.effect = synth, laughs or LaughPicker(), effect
+        self.laugh_on, self.laugh_effect = laugh_on, laugh_effect
 
     async def _speech(self, seg: Segment) -> np.ndarray:
         dr0, dv, gap = TON.get(seg.emotion, TON["neutral"])
@@ -269,14 +281,23 @@ class EnkiVoice:
         levels = [rms(a) for a in audio if a is not None]
         level = float(np.median(levels)) if levels else 3000.0
         for i, s in enumerate(segs):
-            if s.kind == "laugh":
+            if s.kind == "laugh" and self.laugh_on:
                 audio[i] = self._laugh(s.laugh, level)
-        pieces = [a for a in audio if a is not None and len(a)]
+        fx = EFFECTS_F.get(self.effect) if self.effect else None
+        pieces = []
+        for s, a in zip(segs, audio):
+            if a is None or not len(a):
+                continue
+            x = np.asarray(a, np.float32) / 32768.0
+            # efekt sadece konuşmaya: robotik efekt gülmeyi metalik yapıyordu
+            if fx and (s.kind == "speech" or self.laugh_effect):
+                x = fx(x)
+            pieces.append(x)
         if not pieces:
             return None
         gap = np.zeros(int(SR * SEGMENT_GAP_MS / 1000), np.float32)
         joined = np.concatenate([p for a in pieces for p in (a, gap)][:-1])
-        return apply_effect(np.clip(joined, -32767, 32767), self.effect)
+        return _normalize(joined)
 
     async def speak(self, text: str) -> None:
         pcm = await self.render(text)

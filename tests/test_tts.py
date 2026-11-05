@@ -62,3 +62,23 @@ def test_render_empty_and_missing_laugh(tmp_path):
     v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None)
     assert asyncio.run(v.render("")) is None
     assert asyncio.run(v.render("[laugh]")) is None  # kayıt yoksa sessizce atlar
+
+
+def test_laugh_skips_effect_and_can_be_off(tmp_path):
+    (tmp_path / "kisa").mkdir()
+    laugh = (np.sin(np.arange(tts.SR // 2) / 5) * 20000).astype(np.int16)
+    tts.write_wav(tmp_path / "kisa" / "k.wav", laugh)
+
+    async def fake_synth(*a):
+        return (np.sin(np.arange(tts.SR // 4) / 7) * 3000).astype(np.int16)
+
+    seen = []
+    tts.EFFECTS_F["iz"] = lambda x: (seen.append(len(x)), x)[1]
+    try:
+        v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect="iz")
+        asyncio.run(v.render("Şaka. [laugh]"))
+        assert len(seen) == 1  # efekt sadece konuşmaya, gülmeye değil
+        off = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None, laugh_on=False)
+        assert len(asyncio.run(off.render("Şaka. [laugh]"))) < tts.SR // 2  # gülme çalmadı
+    finally:
+        del tts.EFFECTS_F["iz"]
