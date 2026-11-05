@@ -22,6 +22,7 @@ class Utterance:
     audio: np.ndarray  # float32 mono 16 kHz, [-1, 1]
     t_start: float     # time.monotonic()
     t_end: float
+    overlap: bool = False  # Enki konuşurken duyuldu (söz kesme adayı ya da kendi yankısı)
 
 
 class Segmenter:
@@ -97,6 +98,8 @@ class Listener:
         self._raw: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._seg = Segmenter()
         self._muted_until = 0.0
+        self.barge_in = True     # Enki konuşurken de dinle (söz kesme); yankıyı kulak ayıklar
+        self._overlap = False
         self._stream = None
 
     def start(self) -> "Listener":
@@ -123,15 +126,24 @@ class Listener:
             now = time.monotonic()
             if self.mute_while.is_set():
                 self._muted_until = now + self.tail_s
-            if now < self._muted_until:
+            speaking = now < self._muted_until
+            if speaking and not self.barge_in:
                 self._seg.reset(); self.hearing = False
                 continue
+            if speaking:
+                self._overlap = True
             if len(frame) != FRAME * 2:
                 continue
             pcm = np.frombuffer(frame, np.int16)
             self.level = 0.8 * self.level + 0.2 * float(np.sqrt(np.mean((pcm / 32768.0) ** 2)))
             utt = self._seg.push(frame, self._vad.is_speech(frame, SR), now)
             self.hearing = self._seg._active
+            if utt is not None:
+                utt.overlap = self._overlap
+            if not self._seg._active and utt is None and not speaking:
+                self._overlap = False
+            if utt is not None:
+                self._overlap = speaking
             if utt is not None:
                 try:
                     self.out.put_nowait(utt)

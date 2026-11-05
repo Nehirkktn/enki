@@ -79,6 +79,7 @@ function connect() {
   ws.onopen = () => ws.send(JSON.stringify({hello: {body: 'telefon', caps: ['face', 'text', 'speaker'], key}}));
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (m.stop) { player.pause(); return; }
     if (m.welcome) { st.textContent = 'bağlı · ' + m.welcome.bodies.join(' · '); return; }
     if (m.say !== undefined) {
       sub.textContent = m.say;

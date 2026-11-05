@@ -176,3 +176,29 @@ def test_visual_regex_no_false_hits():
     assert VISUAL_RE.search("elimde ne var")
     assert not VISUAL_RE.search("Şu an üzerinde çalışıyorum. O yüzden yapalım.")
     assert not VISUAL_RE.search("kalın değil")
+
+
+def test_only_enki_dur_interrupts():
+    from enki.senses.ear import barge_in, is_echo, stop_command
+    speaking = "Vize cuma, lineer cebir çalışmadın dur bakalım."
+    assert stop_command("Enki dur") and stop_command("dur Enki!") and stop_command("ENKİ DUR")
+    assert not stop_command("dur") and not stop_command("Enki")
+    assert not stop_command("Enki durum ne")            # 'durum' ≠ 'dur'
+    assert barge_in("Enki dur", speaking)
+    assert not barge_in("sus", speaking)
+    assert is_echo("lineer cebir çalışmadın", speaking)
+
+
+def test_speaker_interrupt_stops_remote_wait():
+    hub, local, printer = FakeHub({"telefon"}), Rec(), Rec()
+    class LongVoice:
+        async def render(self, t): return np.zeros(24000 * 30)  # 30 sn
+    sp = BodySpeaker(hub, local, printer, lambda: "telefon", LongVoice())
+    async def go():
+        t = asyncio.create_task(sp.say("uzun bir konuşma"))
+        await asyncio.sleep(0.05)
+        assert sp.current == "uzun bir konuşma"
+        sp.interrupt()
+        await asyncio.wait_for(t, 1)
+    asyncio.run(go())
+    assert sp.interrupted and ("telefon", {"stop": True}) in hub.sent and hub.faces[-1] == "listening"

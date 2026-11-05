@@ -27,8 +27,36 @@ def tr_lower(s: str) -> str:
 
 
 TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma modu"
+# Söz kesme SADECE "Enki dur" ile (Nehir'in kuralı): ikisi birden duyulmalı
+STOP = re.compile(r"\bdur\b")
 CALL_S = 8.0     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
 _ONLY_NAME = re.compile(r"^\W*(?:" + WAKE.pattern + r")\W*$")
+
+
+def _words(s: str) -> list[str]:
+    return re.findall(r"\w+", tr_lower(s))
+
+
+def is_echo(heard: str, speaking: str) -> bool:
+    """Mikrofon Enki'nin kendi sesini mi duydu? Duyulan kelimelerin çoğu şu an söylenende varsa: evet."""
+    h, sp = _words(heard), set(_words(speaking))
+    if not h or not sp:
+        return False
+    return sum(w in sp for w in h) / len(h) >= 0.5
+
+
+def stop_command(text: str) -> bool:
+    """ "Enki dur" / "dur Enki" — ad ve "dur" birlikte."""
+    t = tr_lower(text)
+    return bool(STOP.search(t) and WAKE.search(t))
+
+
+def barge_in(heard: str, speaking: str) -> bool:
+    """Konuşurken duyulan cümle söz kesme mi? Sadece "Enki dur", ve Enki'nin kendi yankısı değilse."""
+    if not stop_command(heard):
+        return False
+    rest = " ".join(w for w in _words(heard) if w != "dur" and not WAKE.fullmatch(w))
+    return not rest or not is_echo(rest, speaking)  # komut kelimeleri yankı sayılmaz
 
 
 def only_name(text: str) -> bool:
@@ -59,9 +87,11 @@ def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
 class EarSense:
     def __init__(self, post: Callable[[Event], None], muted: threading.Event,
                  last_spoke: Callable[[], float], gaze: Callable[[float, float], float] | None = None,
-                 whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9):
+                 whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9,
+                 speaking: Callable[[], str] = lambda: "", interrupt: Callable[[], None] = lambda: None):
         self.post, self.muted, self.last_spoke, self.gaze, self.body = post, muted, last_spoke, gaze, body
         self.last_typed = last_typed
+        self.speaking, self.interrupt = speaking, interrupt
         self._called_at = -1e9
         if whisper == "auto":
             whisper = "turbo" if platform.system() == "Darwin" and platform.machine() == "arm64" else "small"
@@ -94,6 +124,15 @@ class EarSense:
             if not text:
                 continue
             now = time.monotonic()
+            if utt.overlap or self.speaking():
+                said = self.speaking()
+                if not barge_in(text, said):
+                    log.info("konuşurken duyuldu, yok sayıldı%s: %s", " (yankı)" if is_echo(text, said) else "", text)
+                    continue
+                log.info("SÖZ KESME: %s", text)
+                self.interrupt()
+                self._called_at = now  # sustu, dinliyor: sonraki 8 sn içindeki cümle ona
+                continue
             if only_name(text):
                 self._called_at = now
                 log.info("çağrıldı, cümleyi bekliyor: %s", text)

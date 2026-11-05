@@ -336,10 +336,26 @@ class EnkiVoice:
     async def speak(self, text: str) -> None:
         import time
         t0 = time.monotonic()
+        self.cancelled = False
         pcm = await self.render(text)
         log.info("ses üretimi %.1f sn", time.monotonic() - t0)
-        if pcm is not None:
+        if pcm is not None and not self.cancelled:  # üretilirken sözü kesildiyse hiç çalma
             await play(pcm)
+
+    def interrupt(self) -> None:
+        self.cancelled = True
+        stop_playback()
+
+
+_PLAYING: set = set()  # çalan afplay süreçleri: söz kesilince öldürülür
+
+
+def stop_playback() -> None:
+    for p in list(_PLAYING):
+        try:
+            p.terminate()
+        except ProcessLookupError:
+            pass
 
 
 async def play(pcm: np.ndarray) -> None:
@@ -351,7 +367,11 @@ async def play(pcm: np.ndarray) -> None:
     try:
         write_wav(path, pcm)
         p = await asyncio.create_subprocess_exec(player, str(path))
-        await p.wait()
+        _PLAYING.add(p)
+        try:
+            await p.wait()
+        finally:
+            _PLAYING.discard(p)
     finally:
         path.unlink(missing_ok=True)
 
@@ -361,6 +381,9 @@ class VoiceSpeaker:
 
     def __init__(self, voice: EnkiVoice, printer):
         self.voice, self.printer = voice, printer
+
+    def interrupt(self) -> None:
+        self.voice.interrupt()
 
     async def say(self, text: str) -> None:
         await self.printer.say(strip_tags(text))

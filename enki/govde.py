@@ -48,10 +48,15 @@ class BodySpeaker:
         self.hub, self.local, self.printer, self.active, self.voice = hub, local, printer, active, voice
         self.muted = muted or threading.Event()
         self.last_spoke = 0.0
+        self.current = ""            # şu an söylenen metin: kulak kendi yankısını bununla ayıklar
+        self.interrupted = False
+        self._stop = asyncio.Event()
 
     async def say(self, text: str) -> None:
         clean = strip_tags(text)
         body = self.active()
+        self.current, self.interrupted = clean, False
+        self._stop = asyncio.Event()
         if self.hub:
             await self.hub.face(face_emotion(text), clean)
         self.muted.set()  # kulak kendi sesini duymasın
@@ -63,9 +68,22 @@ class BodySpeaker:
                 await self.local.say(text)
         finally:
             self.muted.clear()
+            self.current = ""
             self.last_spoke = time.monotonic()
             if self.hub:
-                await self.hub.face("idle")
+                await self.hub.face("listening" if self.interrupted else "idle")
+
+    def interrupt(self) -> None:
+        """Söz kesme: sesi anında durdur (Mac + telefon). Event loop thread'inden çağrılmalı."""
+        if not self.current:
+            return
+        self.interrupted = True
+        self._stop.set()
+        if hasattr(self.local, "interrupt"):
+            self.local.interrupt()
+        if self.hub:
+            asyncio.get_running_loop().create_task(self.hub.send_to(self.active(), {"stop": True}))
+        log.info("sözü kesildi")
 
     async def _remote(self, body: str, text: str, clean: str) -> None:
         from .hub import wav_b64
@@ -81,4 +99,7 @@ class BodySpeaker:
             msg["audio"] = wav_b64(pcm, SR)
         await self.hub.send_to(body, msg)
         if pcm is not None:  # FSM dürüst kalsın: telefon çalarken Enki "konuşuyor"
-            await asyncio.sleep(len(pcm) / SR)
+            try:
+                await asyncio.wait_for(self._stop.wait(), len(pcm) / SR)
+            except asyncio.TimeoutError:
+                pass

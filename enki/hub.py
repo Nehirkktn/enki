@@ -101,10 +101,16 @@ def handle(body: Body, msg: dict, key: str) -> Event | None:
     return None
 
 
+def _stop_cmd(text: str) -> bool:
+    from .senses.ear import stop_command
+    return stop_command(text)
+
+
 class Hub:
     def __init__(self, post: Callable[[Event], None], host: str = "0.0.0.0", port: int = 8765,
-                 http_port: int = 8766):
+                 http_port: int = 8766, interrupt: Callable[[], None] = lambda: None):
         self.post, self.host, self.port, self.http_port = post, host, port, http_port
+        self.interrupt = interrupt
         self.key = load_key()
         self.bodies: dict[object, Body] = {}   # websocket -> Body
         self._face: dict = {"state": "idle"}
@@ -138,7 +144,12 @@ class Hub:
                     log.info("gövde bağlandı: %s %s", body.name, sorted(body.caps))
                     await ws.send(json.dumps({"welcome": {"body": body.name, "bodies": self.names()}}))
                 if ev is not None:
+                    if isinstance(ev, UserSaid) and _stop_cmd(ev.text):
+                        self.interrupt()  # telefondan "enki dur" yazınca susar
+                        continue
                     self.post(ev)
+                elif body.trusted and msg.get("stop"):
+                    self.interrupt()
         except Exception as e:
             log.debug("bağlantı koptu %s: %s", body.name, e)
         finally:

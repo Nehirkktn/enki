@@ -8,6 +8,7 @@
   /kendi <metin>            # kendi kendine konuşma simülasyonu (Overheard)
   /yuz                      # kamera seni gördü (FaceSeen)
   /gor                      # kamera şu an ne görüyor
+  Enki konuşurken "Enki dur" de (ya da yaz): susar
   Ayrıntılı kayıt: data/enki.log (göz, kulak, gövde ne yaptı)
   /hafiza                   # Enki ne biliyor
   /cik
@@ -62,7 +63,7 @@ def gor_raporu() -> str:
     return f"  durum: {p.state.name} · yüz sayısı: {len(p.faces)} · benzerlik: {sim} (eşik 0.36) · bakıyor: {p.facing}"
 
 
-async def stdin_loop(brain: Brain, mem: Memory) -> None:
+async def stdin_loop(brain: Brain, mem: Memory, interrupt=lambda: None) -> None:
     loop = asyncio.get_running_loop()
     print(f"{DIM}sen ›{RESET} ", end="", flush=True)
     while True:
@@ -73,6 +74,10 @@ async def stdin_loop(brain: Brain, mem: Memory) -> None:
         line = line.strip()
         TYPED[0] = time.monotonic()
         if not line:
+            continue
+        from .senses.ear import stop_command
+        if stop_command(line):  # yazarak da sadece "enki dur" keser
+            interrupt()
             continue
         if line == "/cik":
             brain.post(Shutdown())
@@ -139,10 +144,11 @@ async def amain(args) -> None:
     print(f"{CYAN}Enki uyanıyor…{RESET}")
 
     hub = None
+    speaker_ref = [None]  # hub, konuşmacıdan önce kuruluyor
     if not args.no_hub:
         from .hub import Hub
         try:
-            hub = Hub(brain.post)
+            hub = Hub(brain.post, interrupt=lambda: speaker_ref[0] and speaker_ref[0].interrupt())
             await hub.start()
             _status("gövde", True, f"telefon → {hub.phone_url()}")
         except Exception as e:  # port dolu: eski yuz_koprusu / enki_eller açık olabilir
@@ -151,6 +157,7 @@ async def amain(args) -> None:
 
     speaker = BodySpeaker(hub, local, console, lambda: brain.active_body, voice, muted)
     brain.speaker = speaker
+    speaker_ref[0] = speaker
     loop = asyncio.get_running_loop()
     if hub:
         brain.fsm.subscribe(lambda a, s, b: (f := fsm_face(a, s, b)) and loop.create_task(hub.face(f)))
@@ -175,7 +182,8 @@ async def amain(args) -> None:
             from .senses.ear import EarSense
             ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke,
                            gaze=vision.gaze_fraction if vision else None, whisper=args.whisper,
-                           last_typed=lambda: TYPED[0])
+                           last_typed=lambda: TYPED[0], speaking=lambda: speaker.current,
+                           interrupt=lambda: loop.call_soon_threadsafe(speaker.interrupt))
             print(f"  {DIM}kulak: Whisper yükleniyor…{RESET}")
             await loop.run_in_executor(None, ear.start)
             _status("kulak", True, f"{ear.stt.backend} · 'Enki' diye başla; yazarken sadece 'Enki' denince dinler")
@@ -183,7 +191,7 @@ async def amain(args) -> None:
             _status("kulak", False, str(e)[:120])
     _status("ses", speaks, "" if speaks else "(--sessiz ya da edge-tts yok)")
 
-    reader = asyncio.create_task(stdin_loop(brain, mem))
+    reader = asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt))
     try:
         await brain.run()
     finally:
