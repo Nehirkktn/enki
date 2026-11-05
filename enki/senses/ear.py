@@ -27,6 +27,14 @@ def tr_lower(s: str) -> str:
 
 
 TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma modu"
+CALL_S = 8.0     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
+_ONLY_NAME = re.compile(r"^\W*(?:" + WAKE.pattern + r")\W*$")
+
+
+def only_name(text: str) -> bool:
+    """Tek başına "Enki" / "Enki?" — gerçek bir çağrı da olabilir, Whisper'ın gürültüde uydurması da.
+    Cevap üretmeyiz: Enki sadece dikkat kesilir, asıl cümleyi bekler."""
+    return bool(_ONLY_NAME.match(tr_lower(text).strip()))
 
 
 def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
@@ -40,6 +48,8 @@ def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
         return True, "isim"
     if now - last_typed < TYPING_S:
         return None, "yazıyor"
+    if len(text.split()) < 2:
+        return None, "tek kelime"  # gürültüden tek kelime uydurmalar ("Duyursun") sohbet/bakışla geçmesin
     if now - last_spoke < follow_up_s:
         return True, "sohbet devam"
     g = gaze(t0, t1) if gaze else 0.0
@@ -52,6 +62,7 @@ class EarSense:
                  whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9):
         self.post, self.muted, self.last_spoke, self.gaze, self.body = post, muted, last_spoke, gaze, body
         self.last_typed = last_typed
+        self._called_at = -1e9
         if whisper == "auto":
             whisper = "turbo" if platform.system() == "Darwin" and platform.machine() == "arm64" else "small"
         self.whisper = whisper
@@ -75,14 +86,24 @@ class EarSense:
         while True:
             utt = self.listener.out.get()
             try:
-                text = self.stt(utt.audio, hotwords="Enki")
+                # ipucu (initial_prompt) YOK: Whisper sessizlikte ipucunu kopyalayıp "Enki" uyduruyordu
+                text = self.stt(utt.audio, hotwords=None)
             except Exception:
                 log.exception("whisper hata")
                 continue
             if not text:
                 continue
-            ok, why = addressed(text, utt.t_start, utt.t_end, time.monotonic(), self.last_spoke(), self.gaze,
-                                last_typed=self.last_typed())
+            now = time.monotonic()
+            if only_name(text):
+                self._called_at = now
+                log.info("çağrıldı, cümleyi bekliyor: %s", text)
+                continue
+            if now - self._called_at < CALL_S:
+                self._called_at = -1e9
+                ok, why = True, "çağrıdan sonra"
+            else:
+                ok, why = addressed(text, utt.t_start, utt.t_end, now, self.last_spoke(), self.gaze,
+                                    last_typed=self.last_typed())
             log.info("%s (%s): %s", {True: "bana", False: "kendi kendine", None: "yok sayıldı"}[ok], why, text)
             if ok is None:
                 continue

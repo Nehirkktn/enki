@@ -160,3 +160,11 @@ def test_visual_question_attaches_snapshot(tmp_path):
 def test_ollama_flattens_images():
     from enki.llm import as_text
     assert "yerel beyin" in as_text([{"type": "image"}, {"type": "text", "text": "selam"}])
+
+
+def test_bare_name_is_not_a_question():
+    from enki.senses.ear import only_name
+    assert only_name("Enki") and only_name(" Enki? ") and only_name("ENKİ.")
+    assert not only_name("Enki saat kaç")
+    no_gaze = lambda a, b: 0.0
+    assert addressed("Duyursun", 0, 1, 100, 95, no_gaze) == (None, "tek kelime")
