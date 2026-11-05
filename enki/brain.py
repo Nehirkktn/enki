@@ -71,8 +71,8 @@ _MEM_RE = re.compile(r"<hafiza>(.*?)(?:</hafiza>|$)", re.S | re.I)
 _SILENT = "[SUS]"
 _MD_RE = re.compile(r"[*_#`>]+")
 # Görmeyle ilgili soru → kameranın anlık karesi Claude'a gider (her mesajda değil: gecikme + maliyet)
-VISUAL_RE = re.compile(r"(gör|bak|kamera|görün|giy|elim|saç|yüz|surat|oda|masa|arka|ışık|karanlık|"
-                       r"ne yap|neredeyim|kılık|kıyafet|tişört|gözlük|kim var|yanımda)", re.I)
+VISUAL_RE = re.compile(r"\b(gör|bak[ıaı]|kamera|giy|elimde|saçım|yüzüm|suratım|odam|masam|arkam|ışı[kğ]|"
+                       r"karanlık|ne yapıyorum|neredeyim|kıyafet|tişört|gözlük|kim var|yanımda)", re.I)
 
 
 @dataclass(slots=True)
@@ -210,7 +210,9 @@ class Brain:
                     {"type": "text", "text": "[KAMERA: şu anki görüntü ekte]\n" + msgs[-1]["content"]},
                 ]
                 log.info("kamera karesi eklendi (%d KB)", len(jpg) // 1024)
+        t0 = time.monotonic()
         raw = await self.llm.complete(persona.CORE, context, msgs)
+        log.info("beyin %.1f sn (%s)", time.monotonic() - t0, getattr(self.llm, "name", "?"))
         reply = parse_reply(raw)
 
         for f in reply.facts:

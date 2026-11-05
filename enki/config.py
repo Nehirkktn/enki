@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class Config:
     # --- LLM ---
-    claude_model: str = os.getenv("ENKI_CLAUDE_MODEL", "claude-sonnet-5-5")
+    claude_model: str = os.getenv("ENKI_CLAUDE_MODEL", "claude-haiku-5-5")  # sohbet hızı için; derin iş: claude-sonnet-5-5
     claude_timeout_s: float = 20.0
     ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
     ollama_model: str = os.getenv("ENKI_OLLAMA_MODEL", "qwen2.5:3b")

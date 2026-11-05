@@ -334,7 +334,10 @@ class EnkiVoice:
         return _normalize(joined)
 
     async def speak(self, text: str) -> None:
+        import time
+        t0 = time.monotonic()
         pcm = await self.render(text)
+        log.info("ses üretimi %.1f sn", time.monotonic() - t0)
         if pcm is not None:
             await play(pcm)
 

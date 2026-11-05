@@ -168,3 +168,11 @@ def test_bare_name_is_not_a_question():
     assert not only_name("Enki saat kaç")
     no_gaze = lambda a, b: 0.0
     assert addressed("Duyursun", 0, 1, 100, 95, no_gaze) == (None, "tek kelime")
+
+
+def test_visual_regex_no_false_hits():
+    from enki.brain import VISUAL_RE
+    assert VISUAL_RE.search("beni görüyor musun")
+    assert VISUAL_RE.search("elimde ne var")
+    assert not VISUAL_RE.search("Şu an üzerinde çalışıyorum. O yüzden yapalım.")
+    assert not VISUAL_RE.search("kalın değil")
