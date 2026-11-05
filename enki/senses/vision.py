@@ -51,6 +51,17 @@ class VisionSense:
         xs = [f for t, f in list(self._gaze) if t0 <= t <= t1]
         return sum(xs) / len(xs) if xs else 0.0
 
+    def snapshot_jpeg(self, width: int = 512, quality: int = 70) -> bytes | None:
+        """Anlık kare, 512 px ≈ 350 görüntü token'ı: kıyafet/eşya seçilir, gecikme düşük kalır."""
+        f = self.frame
+        if f is None or not self.ok:
+            return None
+        import cv2
+        h, w = f.shape[:2]
+        small = cv2.resize(f, (width, round(h * width / w)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        return buf.tobytes() if ok else None
+
     def _on_event(self, ev: PEvent) -> None:
         log.info("%s %s", ev.type.name, ev.data)
         if (bev := to_brain_event(ev, self.body)) is not None:

@@ -90,6 +90,9 @@ async def stdin_loop(brain: Brain, mem: Memory) -> None:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")          # "setPreferableTarget" uyarıları
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")  # Whisper "Fetching 4 files" çubuğu
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 
 def build_voice():
@@ -163,6 +166,7 @@ async def amain(args) -> None:
             from .senses.vision import VisionSense
             vision = VisionSense(brain.post_threadsafe, ROOT, camera=args.kamera).start()
             VISION[0] = vision
+            brain.eyes = vision.snapshot_jpeg
             _status("göz", True, "(/gor ile kontrol et)")
         except Exception as e:
             _status("göz", False, str(e))

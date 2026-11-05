@@ -134,3 +134,29 @@ def test_typing_mode_ignores_everything_but_name():
     assert addressed("bunu nasıl yazıyordum", 0, 1, 100, 95, looking, last_typed=50) == (None, "yazıyor")
     assert addressed("Enki bak", 0, 1, 100, 0, looking, last_typed=99)[0] is True
     assert addressed("bunu nasıl yazıyordum", 0, 1, 1000, 0, looking, last_typed=50)[0] is True  # yazma bitti
+
+
+def test_visual_question_attaches_snapshot(tmp_path):
+    class ImgLLM:
+        name = "fake"
+        def __init__(self): self.msgs = None
+        async def complete(self, core, context, messages):
+            self.msgs = messages; return "Mavi tişört."
+    cfg = Config(db_path=str(tmp_path / "t.db"))
+    llm = ImgLLM()
+    b = Brain(cfg, llm, Memory(cfg), Rec(), eyes=lambda: b"\xff\xd8jpeg")
+    async def go():
+        await b._handle(UserSaid("beni görüyor musun", "konsol"))
+        first = llm.msgs[-1]["content"]
+        b.fsm.reset()
+        await b._handle(UserSaid("saat kaç", "konsol"))
+        return first, llm.msgs[-1]["content"]
+    first, second = asyncio.run(go())
+    assert isinstance(first, list) and first[0]["type"] == "image"
+    assert isinstance(second, str)
+    assert "görüyor" in b.mem.recent(4)[0].text  # hafızaya sadece metin girer
+
+
+def test_ollama_flattens_images():
+    from enki.llm import as_text
+    assert "yerel beyin" in as_text([{"type": "image"}, {"type": "text", "text": "selam"}])

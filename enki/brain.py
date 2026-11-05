@@ -70,6 +70,9 @@ class Speaker(Protocol):
 _MEM_RE = re.compile(r"<hafiza>(.*?)(?:</hafiza>|$)", re.S | re.I)
 _SILENT = "[SUS]"
 _MD_RE = re.compile(r"[*_#`>]+")
+# Görmeyle ilgili soru → kameranın anlık karesi Claude'a gider (her mesajda değil: gecikme + maliyet)
+VISUAL_RE = re.compile(r"(gör|bak|kamera|görün|giy|elim|saç|yüz|surat|oda|masa|arka|ışık|karanlık|"
+                       r"ne yap|neredeyim|kılık|kıyafet|tişört|gözlük|kim var|yanımda)", re.I)
 
 
 @dataclass(slots=True)
@@ -103,8 +106,9 @@ def to_messages(turns: list[tuple[str, str]], tail_user: str | None) -> list[Mes
 # ---------- brain ----------
 class Brain:
     def __init__(self, cfg: Config, llm: LLM, memory: Memory, speaker: Speaker,
-                 rng: random.Random | None = None):
+                 rng: random.Random | None = None, eyes=None):
         self.cfg, self.llm, self.mem, self.speaker = cfg, llm, memory, speaker
+        self.eyes = eyes  # () -> jpeg bytes | None
         self.fsm = StateMachine()
         self.rng = rng or random.Random()
         self.initiative = Initiative(cfg, rng=self.rng)
@@ -195,7 +199,18 @@ class Brain:
 
         context = persona.dynamic_context(self.mem.facts(), recalled, datetime.now(),
                                           body=self.active_body, present=sorted(self.present))
-        raw = await self.llm.complete(persona.CORE, context, to_messages(recent, user_text))
+        msgs = to_messages(recent, user_text)
+        if self.eyes and store_as is not None and VISUAL_RE.search(user_text):
+            jpg = self.eyes()
+            if jpg:
+                import base64
+                msgs[-1]["content"] = [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                 "data": base64.b64encode(jpg).decode()}},
+                    {"type": "text", "text": "[KAMERA: şu anki görüntü ekte]\n" + msgs[-1]["content"]},
+                ]
+                log.info("kamera karesi eklendi (%d KB)", len(jpg) // 1024)
+        raw = await self.llm.complete(persona.CORE, context, msgs)
         reply = parse_reply(raw)
 
         for f in reply.facts:

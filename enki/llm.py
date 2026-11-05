@@ -14,7 +14,15 @@ import httpx
 from .config import Config
 
 log = logging.getLogger("enki.llm")
-Message = dict[str, str]  # {"role": "user"|"assistant", "content": str}
+Message = dict  # {"role": "user"|"assistant", "content": str | list[block]}  (block: Anthropic text/image)
+
+
+def as_text(content) -> str:
+    """Görüntülü mesajı metne indir (görüntü okuyamayan yerel model için)."""
+    if isinstance(content, str):
+        return content
+    return " ".join(b.get("text", "") if b.get("type") == "text" else "[kamera görüntüsü: yerel beyin göremez]"
+                    for b in content)
 
 
 class LLM(Protocol):
@@ -60,7 +68,8 @@ class OllamaLLM:
                 "model": self.cfg.ollama_model,
                 "stream": False,
                 "options": {"num_predict": self.cfg.max_tokens},
-                "messages": [{"role": "system", "content": f"{core}\n\n{context}"}, *messages],
+                "messages": [{"role": "system", "content": f"{core}\n\n{context}"},
+                             *({"role": m["role"], "content": as_text(m["content"])} for m in messages)],
             },
         )
         r.raise_for_status()
