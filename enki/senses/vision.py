@@ -37,6 +37,7 @@ class VisionSense:
         self._gaze: collections.deque[tuple[float, bool]] = collections.deque(maxlen=900)  # ~30 s
         self._stop = threading.Event()
         self.frame = None
+        self.percept = None
         self.ok = False
 
     def start(self) -> "VisionSense":
@@ -72,11 +73,11 @@ class VisionSense:
                 while not self._stop.is_set():
                     seq, frame = cam.read(seq)
                     p = pipe.process(frame)
-                    self.frame = frame
+                    self.frame, self.percept = frame, p
                     self._gaze.append((time.monotonic(), p.facing and p.state is Presence.OWNER))
         except Exception as e:
             self.ok = False
-            log.warning("göz kapalı: %s", e)
+            log.exception("göz kapalı: %s", e)
 
 
 def enroll(root: Path, camera: int | str = 0, samples: int = 20, reset: bool = False) -> int:

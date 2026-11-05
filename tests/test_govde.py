@@ -127,3 +127,10 @@ def test_brain_tracks_body_and_presence(tmp_path):
     asyncio.run(go())
     assert b.active_body == "telefon" and b.present == set()
     assert "telefon" in llm.contexts[0]
+
+
+def test_typing_mode_ignores_everything_but_name():
+    looking = lambda a, b: 1.0
+    assert addressed("bunu nasıl yazıyordum", 0, 1, 100, 95, looking, last_typed=50) == (None, "yazıyor")
+    assert addressed("Enki bak", 0, 1, 100, 0, looking, last_typed=99)[0] is True
+    assert addressed("bunu nasıl yazıyordum", 0, 1, 1000, 0, looking, last_typed=50)[0] is True  # yazma bitti

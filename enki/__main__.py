@@ -7,6 +7,8 @@
   python -m enki --kayit    # yüzünü öğret (kamera, ~20 sn)
   /kendi <metin>            # kendi kendine konuşma simülasyonu (Overheard)
   /yuz                      # kamera seni gördü (FaceSeen)
+  /gor                      # kamera şu an ne görüyor
+  Ayrıntılı kayıt: data/enki.log (göz, kulak, gövde ne yaptı)
   /hafiza                   # Enki ne biliyor
   /cik
 """
@@ -18,6 +20,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 from .brain import Brain, FaceSeen, Overheard, Shutdown, UserSaid
@@ -42,6 +45,23 @@ class ConsoleSpeaker:
         print(f"\r{CYAN}Enki{tag} ›{RESET} {strip_tags(text)}\n{DIM}sen ›{RESET} ", end="", flush=True)
 
 
+TYPED = [-1e9]  # son klavye girişi (time.monotonic): kulak buna göre yazma moduna geçer
+VISION = [None]
+
+
+def gor_raporu() -> str:
+    v = VISION[0]
+    if v is None:
+        return "  göz kapalı (--no-cam)"
+    if not v.ok:
+        return "  kamera açılamadı: data/enki.log'a bak (çoğunlukla Terminal'in Kamera izni)"
+    p = v.percept
+    if p is None:
+        return "  kamera açık, henüz kare yok"
+    sim = f"{p.sim_ema:.2f}" if p.sim_ema is not None else "-"
+    return f"  durum: {p.state.name} · yüz sayısı: {len(p.faces)} · benzerlik: {sim} (eşik 0.36) · bakıyor: {p.facing}"
+
+
 async def stdin_loop(brain: Brain, mem: Memory) -> None:
     loop = asyncio.get_running_loop()
     print(f"{DIM}sen ›{RESET} ", end="", flush=True)
@@ -51,6 +71,7 @@ async def stdin_loop(brain: Brain, mem: Memory) -> None:
             brain.post(Shutdown())
             return
         line = line.strip()
+        TYPED[0] = time.monotonic()
         if not line:
             continue
         if line == "/cik":
@@ -58,6 +79,8 @@ async def stdin_loop(brain: Brain, mem: Memory) -> None:
             return
         if line == "/hafiza":
             print("\n".join(f"  • {f}" for f in mem.facts()) or "  (boş)")
+        elif line == "/gor":
+            print(gor_raporu())
         elif line == "/yuz":
             brain.post(FaceSeen())
         elif line.startswith("/kendi "):
@@ -86,7 +109,16 @@ def _status(name: str, ok: bool, note: str = "") -> None:
 
 
 async def amain(args) -> None:
-    logging.basicConfig(level=os.getenv("ENKI_LOG", "WARNING"), format="%(name)s: %(message)s")
+    # Ekran yazmak için temiz kalsın: her şey data/enki.log'a, ekrana sadece hatalar
+    (ROOT / "data").mkdir(exist_ok=True)
+    fh = logging.FileHandler(ROOT / "data" / "enki.log", encoding="utf-8")
+    fh.setLevel(os.getenv("ENKI_LOG", "INFO"))
+    sh = logging.StreamHandler()
+    sh.setLevel(logging.ERROR)
+    logging.basicConfig(level=logging.DEBUG, handlers=[fh, sh],
+                        format="%(asctime)s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    for noisy in ("httpx", "httpcore", "websockets", "anthropic", "urllib3", "asyncio"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     cfg = Config()
     mem = Memory(cfg)
     llm = build_llm(cfg)
@@ -130,17 +162,19 @@ async def amain(args) -> None:
         try:
             from .senses.vision import VisionSense
             vision = VisionSense(brain.post_threadsafe, ROOT, camera=args.kamera).start()
-            _status("göz", True, "(kamera izni yoksa birkaç sn içinde uyarı düşer)")
+            VISION[0] = vision
+            _status("göz", True, "(/gor ile kontrol et)")
         except Exception as e:
             _status("göz", False, str(e))
     if not args.no_mic:
         try:
             from .senses.ear import EarSense
             ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke,
-                           gaze=vision.gaze_fraction if vision else None, whisper=args.whisper)
+                           gaze=vision.gaze_fraction if vision else None, whisper=args.whisper,
+                           last_typed=lambda: TYPED[0])
             print(f"  {DIM}kulak: Whisper yükleniyor…{RESET}")
             await loop.run_in_executor(None, ear.start)
-            _status("kulak", True, f"{ear.stt.backend} · 'Enki' de, ya da kameraya bakarak konuş")
+            _status("kulak", True, f"{ear.stt.backend} · 'Enki' diye başla; yazarken sadece 'Enki' denince dinler")
         except Exception as e:
             _status("kulak", False, str(e)[:120])
     _status("ses", speaks, "" if speaks else "(--sessiz ya da edge-tts yok)")

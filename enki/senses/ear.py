@@ -26,11 +26,20 @@ def tr_lower(s: str) -> str:
     return s.replace("İ", "i").replace("I", "ı").lower()
 
 
+TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma modu"
+
+
 def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
               gaze: Callable[[float, float], float] | None,
-              follow_up_s: float = 10.0, gaze_ratio: float = 0.4) -> tuple[bool, str]:
+              follow_up_s: float = 10.0, gaze_ratio: float = 0.4,
+              last_typed: float = -1e9) -> tuple[bool | None, str]:
+    """True = bana konuşuyor, False = kendi kendine, None = yok say.
+    Yazarken yüzü ekrana (kameraya) dönük: bakış kuralı her mırıltıyı Enki'ye sayıyordu.
+    Yazma modunda sadece "Enki" denirse dinler, gerisini hiç duymamış sayar."""
     if WAKE.search(tr_lower(text)):
         return True, "isim"
+    if now - last_typed < TYPING_S:
+        return None, "yazıyor"
     if now - last_spoke < follow_up_s:
         return True, "sohbet devam"
     g = gaze(t0, t1) if gaze else 0.0
@@ -40,8 +49,9 @@ def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
 class EarSense:
     def __init__(self, post: Callable[[Event], None], muted: threading.Event,
                  last_spoke: Callable[[], float], gaze: Callable[[float, float], float] | None = None,
-                 whisper: str = "auto", body: str = "mac"):
+                 whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9):
         self.post, self.muted, self.last_spoke, self.gaze, self.body = post, muted, last_spoke, gaze, body
+        self.last_typed = last_typed
         if whisper == "auto":
             whisper = "turbo" if platform.system() == "Darwin" and platform.machine() == "arm64" else "small"
         self.whisper = whisper
@@ -71,6 +81,9 @@ class EarSense:
                 continue
             if not text:
                 continue
-            ok, why = addressed(text, utt.t_start, utt.t_end, time.monotonic(), self.last_spoke(), self.gaze)
-            log.info("%s (%s): %s", "bana" if ok else "kendi kendine", why, text)
+            ok, why = addressed(text, utt.t_start, utt.t_end, time.monotonic(), self.last_spoke(), self.gaze,
+                                last_typed=self.last_typed())
+            log.info("%s (%s): %s", {True: "bana", False: "kendi kendine", None: "yok sayıldı"}[ok], why, text)
+            if ok is None:
+                continue
             self.post(UserSaid(text, self.body) if ok else Overheard(text, self.body))
