@@ -1,4 +1,4 @@
-"""Enki'nin sesi: edge-tts Ahmet + TON tonlaması + JARVIS efekti + gerçek gülme kayıtları.
+"""Enki'nin sesi: edge-tts Ahmet + TON tonlaması + R1 robot efekti (6 Kas; ENKI_SES_EFEKT=jarvis eskisi) + gülme kayıtları (varsayılan kapalı).
 
 Beyin cevabı etiketli verir:  "[smug] Tabii ilk denemede değil. [laugh] Şaka şaka."
 - Duygu etiketi ([excited] [smug] [blush] [stern]) arkasından gelen cümlelerin tonunu belirler.
@@ -30,7 +30,7 @@ SR = 24_000
 VOICE = os.getenv("ENKI_SES", "tr-TR-AhmetNeural")
 BASE_RATE = int(os.getenv("ENKI_SES_HIZ", "6"))      # %   (gülmenin hızı: hepsi bu hızda)
 BASE_PITCH = int(os.getenv("ENKI_SES_PERDE", "10"))  # Hz  (genç, parlak)
-EFFECT = os.getenv("ENKI_SES_EFEKT", "jarvis") or None
+EFFECT = os.getenv("ENKI_SES_EFEKT", "robot") or None   # robot (R1, 6 Kas) | jarvis | boş = efektsiz
 GULME = os.getenv("ENKI_GULME", "0") == "1"                  # kapalı: kayıtlar çok kalın/yapay; 1 = aç
 GULME_EFEKT = os.getenv("ENKI_GULME_EFEKT", "0") == "1"      # 1 = efekt gülmeye de uygulanır (eski davranış)
 GULME_DIR = pathlib.Path(os.getenv("ENKI_GULME_DIR", pathlib.Path(__file__).resolve().parents[1] / "voices" / "gulme"))
@@ -179,8 +179,42 @@ def jarvis(pcm: np.ndarray) -> np.ndarray:
     return _normalize(_jarvis_f(pcm.astype(np.float32) / 32768.0))
 
 
-EFFECTS = {"jarvis": jarvis}
-EFFECTS_F = {"jarvis": _jarvis_f}
+def _bp(x: np.ndarray, lo: float, hi: float, order: int) -> np.ndarray:
+    from scipy.signal import butter, sosfilt
+    return sosfilt(butter(order, [lo, hi], "bandpass", fs=SR, output="sos"), x)
+
+
+def _comb(x: np.ndarray, ms: float, fb: float, mix: float) -> np.ndarray:
+    d = int(round(SR * ms / 1000))
+    y = np.copy(x)
+    for i in range(d, len(y), d):  # y[n] = x[n] + fb·y[n-d], d örneklik bloklarla
+        j = min(i + d, len(y))
+        y[i:j] += fb * y[i - d:j - d]
+    return (1 - mix) * x + mix * (1 - fb) * y
+
+
+def _robot_f(x: np.ndarray) -> np.ndarray:
+    """R1 'robot male' rengi (Nehir'in referans kaydından): perde DEĞİŞMEZ.
+    300 Hz altı kesik + 0.85-1.9 kHz varlık bölgesi + sabit 4.1 ms tarak (metalik ~245 Hz) + doygunluk + kısa yankı."""
+    peak = float(np.abs(x).max()) or 1.0   # parçanın seviyesi korunur (TON ses gücü farkları kaybolmasın)
+    pk = lambda v: v / (float(np.abs(v).max()) or 1.0) * 0.9
+    x = _bp(pk(x), 380, 5500, 6)
+    x = x + 2.2 * _bp(x, 850, 1900, 2)
+    x = _comb(x, 4.1, 0.55, 0.7)
+    x = np.tanh(1.8 * pk(x)) / np.tanh(1.8)
+    y = np.copy(x)
+    for ms, g in ((55, .22), (110, .1), (180, .05)):
+        d = int(SR * ms / 1000)
+        y[d:] += g * x[:-d]
+    return y / (float(np.abs(y).max()) or 1.0) * peak
+
+
+def robot(pcm: np.ndarray) -> np.ndarray:
+    return _normalize(_robot_f(pcm.astype(np.float32) / 32768.0))
+
+
+EFFECTS = {"jarvis": jarvis, "robot": robot}
+EFFECTS_F = {"jarvis": _jarvis_f, "robot": _robot_f}
 
 
 def apply_effect(pcm: np.ndarray, effect: str | None = EFFECT) -> np.ndarray:
