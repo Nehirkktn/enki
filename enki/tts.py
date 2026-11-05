@@ -31,7 +31,7 @@ VOICE = os.getenv("ENKI_SES", "tr-TR-AhmetNeural")
 BASE_RATE = int(os.getenv("ENKI_SES_HIZ", "6"))      # %   (gülmenin hızı: hepsi bu hızda)
 BASE_PITCH = int(os.getenv("ENKI_SES_PERDE", "10"))  # Hz  (genç, parlak)
 EFFECT = os.getenv("ENKI_SES_EFEKT", "jarvis") or None
-GULME = os.getenv("ENKI_GULME", "1") != "0"                  # 0 = gülme kayıtları hiç çalmaz
+GULME = os.getenv("ENKI_GULME", "0") == "1"                  # kapalı: kayıtlar çok kalın/yapay; 1 = aç
 GULME_EFEKT = os.getenv("ENKI_GULME_EFEKT", "0") == "1"      # 1 = efekt gülmeye de uygulanır (eski davranış)
 GULME_DIR = pathlib.Path(os.getenv("ENKI_GULME_DIR", pathlib.Path(__file__).resolve().parents[1] / "voices" / "gulme"))
 

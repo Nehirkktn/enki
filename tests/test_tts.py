@@ -47,7 +47,7 @@ def test_render_inserts_laugh_at_speech_level(tmp_path):
         calls.append((text, rate, pitch, volume))
         return (np.sin(np.arange(tts.SR // 4) / 7) * 3000).astype(np.int16)
 
-    v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None)
+    v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None, laugh_on=True)
     pcm = asyncio.run(v.render("[laugh] Şaka şaka. [stern] Vize cuma."))
     assert pcm is not None and pcm.dtype == np.int16
     assert len(pcm) > tts.SR  # 2 cümle + gülme
@@ -75,7 +75,7 @@ def test_laugh_skips_effect_and_can_be_off(tmp_path):
     seen = []
     tts.EFFECTS_F["iz"] = lambda x: (seen.append(len(x)), x)[1]
     try:
-        v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect="iz")
+        v = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect="iz", laugh_on=True)
         asyncio.run(v.render("Şaka. [laugh]"))
         assert len(seen) == 1  # efekt sadece konuşmaya, gülmeye değil
         off = EnkiVoice(fake_synth, LaughPicker(tmp_path), effect=None, laugh_on=False)
