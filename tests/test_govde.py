@@ -77,7 +77,9 @@ def test_reply_goes_to_body_she_spoke_from():
     active = ["konsol"]
     sp = BodySpeaker(hub, local, printer, lambda: active[0], FakeVoice())
     asyncio.run(sp.say("[blush] Teşekkürler."))
-    assert local.said == ["[blush] Teşekkürler."] and hub.sent == []
+    assert local.said == ["[blush] Teşekkürler."]
+    assert hub.sent == [("konsol", {"say": "Teşekkürler.", "brain": ""})]  # terminal istemcisine metin, ses yok
+    hub.sent.clear()
     assert hub.faces == ["blush", "idle"]
     active[0] = "telefon"
     asyncio.run(sp.say("[smug] Tabii."))

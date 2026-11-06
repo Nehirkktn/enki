@@ -4,6 +4,8 @@
   enki --sessiz             # Enki sesli cevap vermez (ya da ENKI_SESSIZ=1)
   enki --no-cam --no-mic    # sadece klavye
   enki --no-hub             # telefon/yüz bağlantısı yok
+  python -m enki --arkaplan # servis modu (Mac açılınca launchd başlatır, enki_kur.command)
+  Enki arka planda çalışıyorsa `enki` ona bağlanır: yazarak konuşursun, ikinci kopya açılmaz.
   python -m enki --kayit    # yüzünü öğret (kamera, ~30 sn)
   python -m enki --ses-kayit  # sesini öğret (10 cümle okursun)
   /kendi <metin>            # kendi kendine konuşma simülasyonu (Overheard)
@@ -39,7 +41,7 @@ class ConsoleSpeaker:
     """Prefixes each reply with the brain that produced it; fallback is yellow so it can't hide."""
 
     def __init__(self, brain_name=lambda: ""):
-        self.brain_name = brain_name
+        self.brain_name = brain_name  # govde.BodySpeaker bunu terminal istemcisine de iletir
 
     async def say(self, text: str) -> None:
         name = self.brain_name()
@@ -113,6 +115,45 @@ def build_voice():
     return EnkiVoice()
 
 
+async def running_enki():
+    """Arka planda çalışan bir Enki var mı? (8765'te gövde merkezi cevap veriyorsa)"""
+    try:
+        import websockets
+        return await asyncio.wait_for(websockets.connect("ws://127.0.0.1:8765"), 1.5)
+    except Exception:
+        return None
+
+
+async def client(ws) -> None:
+    """Çalışan Enki'ye terminal gövdesi olarak bağlan. /cik sadece bu pencereyi kapatır, Enki çalışmaya devam eder."""
+    import json
+    await ws.send(json.dumps({"hello": {"body": "konsol", "caps": ["text"]}}))
+    print(f"{CYAN}Enki'ye bağlandın{RESET} {DIM}(arka planda çalışıyor · /cik bu pencereyi kapatır · 'enki dur' susturur){RESET}")
+    loop = asyncio.get_running_loop()
+
+    async def recv():
+        async for raw in ws:
+            m = json.loads(raw)
+            if "say" in m:
+                b = m.get("brain") or ""
+                tag = f" {DIM if b == 'claude' else YELLOW}[{b}]{RESET}{CYAN}" if b else ""
+                print(f"\r{CYAN}Enki{tag} ›{RESET} {m['say']}\n{DIM}sen ›{RESET} ", end="", flush=True)
+            elif m.get("state") == "thinking":
+                print(f"\r{DIM}…{RESET}", end="", flush=True)
+    rx = asyncio.create_task(recv())
+    print(f"{DIM}sen ›{RESET} ", end="", flush=True)
+    try:
+        while True:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line or line.strip() == "/cik":
+                return
+            if line.strip():
+                await ws.send(json.dumps({"said": line.strip()}))
+    finally:
+        rx.cancel()
+        await ws.close()
+
+
 def launch_desktop_face():
     """Masaüstü yüzünü (enki_masaustu.py, PySide6) Enki ile birlikte aç; hub'a kendisi bağlanır."""
     import subprocess
@@ -133,6 +174,9 @@ def _status(name: str, ok: bool, note: str = "") -> None:
 
 
 async def amain(args) -> None:
+    if not args.arkaplan and (ws := await running_enki()):
+        await client(ws)
+        return
     # Ekran yazmak için temiz kalsın: her şey data/enki.log'a, ekrana sadece hatalar
     (ROOT / "data").mkdir(exist_ok=True)
     fh = logging.FileHandler(ROOT / "data" / "enki.log", encoding="utf-8")
@@ -230,11 +274,13 @@ async def amain(args) -> None:
     if hub and not args.yuzsuz:
         face_proc = launch_desktop_face()
 
-    reader = asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt))
+    # arka plan modunda klavye yok: stdin kapalı olur, okumaya çalışırsak Enki kendini kapatırdı
+    reader = None if args.arkaplan else asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt))
     try:
         await brain.run()
     finally:
-        reader.cancel()
+        if reader:
+            reader.cancel()
         if face_proc and face_proc.poll() is None:
             face_proc.terminate()
         if vision:
@@ -254,6 +300,7 @@ def main() -> None:
     ap.add_argument("--sifirla", action="store_true", help="--kayit/--ses-kayit ile: eski kaydı sil")
     ap.add_argument("--ses-kayit", action="store_true", help="sesini öğret ve çık")
     ap.add_argument("--yuzsuz", action="store_true", help="masaüstü yüzünü açma")
+    ap.add_argument("--arkaplan", action="store_true", help="servis modu: klavye yok, launchd başlatır")
     args = ap.parse_args()
     args.sessiz = args.sessiz or bool(os.getenv("ENKI_SESSIZ"))
     try:

@@ -65,6 +65,8 @@ class BodySpeaker:
                 await self.printer.say(text)
                 await self._remote(body, text, clean)
             else:
+                if self.hub:  # arka plan modunda terminal istemcisi ("enki") cevabı buradan görür
+                    await self.hub.send_to(body, {"say": clean, "brain": getattr(self.printer, "brain_name", lambda: "")()})
                 await self.local.say(text)
         finally:
             self.muted.clear()

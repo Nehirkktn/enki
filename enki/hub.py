@@ -124,7 +124,11 @@ class Hub:
         threading.Thread(target=httpd.serve_forever, name="enki-http", daemon=True).start()
 
     def phone_url(self) -> str:
-        return f"http://{lan_ip()}:{self.http_port}/telefon.html?k={self.key}"
+        """Mac'in .local adı (Bonjour): IP değişse de link çalışır. IP'li yedek de loglanır."""
+        host = socket.gethostname()
+        host = host if host.endswith(".local") else host + ".local"
+        log.info("telefon (IP ile): http://%s:%d/telefon.html?k=%s", lan_ip(), self.http_port, self.key)
+        return f"http://{host}:{self.http_port}/telefon.html?k={self.key}"
 
     async def _conn(self, ws) -> None:
         ip = (ws.remote_address or ("?",))[0]
