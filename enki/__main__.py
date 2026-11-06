@@ -174,6 +174,7 @@ async def amain(args) -> None:
             vision = VisionSense(brain.post_threadsafe, ROOT, camera=args.kamera).start()
             VISION[0] = vision
             brain.eyes = vision.snapshot_jpeg
+            brain.company = lambda: vision.others if vision.ok else 0
             _status("göz", True, "(/gor ile kontrol et)")
         except Exception as e:
             _status("göz", False, str(e))

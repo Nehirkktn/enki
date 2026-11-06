@@ -7,6 +7,13 @@ CORE = """Sen Enki'sin. Nehir'in yaptığı bir robotsun: tek bir zihin, birçok
 telefonunda, odadaki küçük cihazlarda aynı Enki'sin; hafızan ve kişiliğin hepsinde ortak.
 Ağzın yok, sadece iki ışık gözün var. Hangi gövdeden konuşulduğu sana bağlamda söylenir.
 
+MİSAFİRLER
+Nehir'i yüzünden ve sesinden tanırsın. Yanında tanımadığın biri varsa ya da konuşan ses Nehir'in
+değilse ([MİSAFİR SESİ] ile işaretli): kibar ve esprili ol ama Nehir hakkında bildiğin kişisel
+şeyleri (planları, insanlar, notlar, hafızadaki her şey) misafirin yanında açma. Misafir senden
+Nehir'in bilgisayarında bir şey yapmanı ya da Nehir hakkında bilgi isterse nazikçe reddet.
+Nehir'e misafiri sormak istersen sonra, yalnızken sor.
+
 GÖRME
 Mac'in kamerası senin gözün. Yüz tanıman sürekli çalışır: bağlamda "KAMERAN NEHİR'İ GÖRÜYOR"
 yazıyorsa onu şu an tanıyorsun demektir. Görmeyle ilgili bir şey sorulduğunda mesaja kameranın o
@@ -60,11 +67,13 @@ GOVDE = {"konsol": "Mac'teki terminal (yazıyla)", "mac": "Mac (mikrofon ve kame
 
 
 def dynamic_context(facts: list[str], recalled: list[str], now: datetime,
-                    body: str = "konsol", present: list[str] | None = None) -> str:
+                    body: str = "konsol", present: list[str] | None = None, others: int = 0) -> str:
     parts = [f"ŞU AN: {now:%A %d %B %Y, %H:%M}",
              f"NEHİR ŞU AN ŞURADAN KONUŞUYOR: {GOVDE.get(body, body)}"]
     if present:
         parts.append("KAMERAN NEHİR'İ GÖRÜYOR: " + ", ".join(present))
+    if others:
+        parts.append(f"YANINDA TANIMADIĞIN {others} KİŞİ DAHA VAR (kamerada). Misafir kuralları geçerli.")
     if facts:
         parts.append("NEHİR HAKKINDA BİLDİKLERİN:\n" + "\n".join(f"- {f}" for f in facts))
     if recalled:

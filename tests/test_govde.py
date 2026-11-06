@@ -202,3 +202,22 @@ def test_speaker_interrupt_stops_remote_wait():
         await asyncio.wait_for(t, 1)
     asyncio.run(go())
     assert sp.interrupted and ("telefon", {"stop": True}) in hub.sent and hub.faces[-1] == "listening"
+
+
+def test_company_needs_3_seconds():
+    from enki.senses.vision import VisionSense
+    v = VisionSense(lambda e: None, None)
+    for t in (0, 1, 2):
+        v._track_company(1, float(t))
+    assert v.others == 0            # 2 sn titreme: misafir değil
+    v._track_company(1, 3.1)
+    assert v.others == 1
+    v._track_company(0, 4); v._track_company(0, 7.5)
+    assert v.others == 0
+
+
+def test_context_mentions_guest():
+    from datetime import datetime
+    from enki import persona
+    c = persona.dynamic_context([], [], datetime.now(), present=["mac"], others=1)
+    assert "1 KİŞİ DAHA" in c

@@ -109,6 +109,7 @@ class Brain:
                  rng: random.Random | None = None, eyes=None):
         self.cfg, self.llm, self.mem, self.speaker = cfg, llm, memory, speaker
         self.eyes = eyes  # () -> jpeg bytes | None
+        self.company = None  # () -> int: kamerada Nehir dışında kaç kişi var
         self.fsm = StateMachine()
         self.rng = rng or random.Random()
         self.initiative = Initiative(cfg, rng=self.rng)
@@ -198,7 +199,8 @@ class Brain:
             self.mem.add_turn("user", store_as)
 
         context = persona.dynamic_context(self.mem.facts(), recalled, datetime.now(),
-                                          body=self.active_body, present=sorted(self.present))
+                                          body=self.active_body, present=sorted(self.present),
+                                          others=self.company() if self.company else 0)
         msgs = to_messages(recent, user_text)
         if self.eyes and store_as is not None and VISUAL_RE.search(user_text):
             jpg = self.eyes()
