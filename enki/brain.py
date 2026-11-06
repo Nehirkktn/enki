@@ -124,7 +124,7 @@ class Brain:
 
     def post(self, ev: Event) -> None:
         if self._confirm is not None and not self._confirm.done() and isinstance(ev, UserSaid) \
-                and not ev.text.startswith("[MİSAFİR SESİ]"):
+                and not ev.text.startswith("[MİSAFİR") and not (ev.body == "konsol" and self.stranger_at_mac()):
             self._confirm.set_result(ev.text)  # eller'in sorusuna cevap: kuyruğa girmez
             return
         self.events.put_nowait(ev)
@@ -135,6 +135,10 @@ class Brain:
             self.events.put_nowait(ev)
         else:
             self._loop.call_soon_threadsafe(self.post, ev)
+
+    def stranger_at_mac(self) -> bool:
+        """Kamera Mac'in başında Nehir'i görmüyor ama tanımadığı birini görüyor."""
+        return "mac" not in self.present and bool(self.company and self.company() > 0)
 
     async def ask_confirm(self, soru: str, timeout: float = 45.0) -> bool:
         """Eller onay istiyor: Enki sesli sorar, Nehir'in sıradaki cümlesi cevaptır."""
@@ -181,6 +185,8 @@ class Brain:
                 log.exception("observer")
         match ev:
             case UserSaid(text, body):
+                if body == "konsol" and self.stranger_at_mac() and not text.startswith("[MİSAFİR"):
+                    text = f"[MİSAFİR] {text}"  # klavyede yazan Nehir değil: kamera onu görmüyor, başkasını görüyor
                 self.active_body = body
                 self.initiative.on_user_spoke()
                 self.fsm.fire(Sigma.WAKE)

@@ -86,7 +86,10 @@ async def stdin_loop(brain: Brain, mem: Memory, interrupt=lambda: None) -> None:
             brain.post(Shutdown())
             return
         if line == "/hafiza":
-            print("\n".join(f"  • {f}" for f in mem.facts()) or "  (boş)")
+            if brain.stranger_at_mac():
+                print("  Hafıza sadece Nehir'e açık.")
+            else:
+                print("\n".join(f"  • {f}" for f in mem.facts()) or "  (boş)")
         elif line == "/gor":
             print(gor_raporu())
         elif line == "/yuz":

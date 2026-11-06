@@ -26,7 +26,7 @@ YES_RE = re.compile(r"\b(evet|yap|tamam|olur|onaylıyorum|onayla|aynen|tabii)\b"
 
 
 def wants_hands(text: str) -> bool:
-    return not text.startswith("[MİSAFİR SESİ]") and bool(HANDS_RE.search(text))
+    return not text.startswith("[MİSAFİR") and bool(HANDS_RE.search(text))
 
 
 class _FaceAdapter:

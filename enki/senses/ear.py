@@ -33,7 +33,7 @@ TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma mo
 STOP = re.compile(r"\bdur\b")
 CALL_S = 8.0
 YESNO = re.compile(r"\b(evet|hayır|yap|yapma|tamam|olur|olmaz|aynen|tabii|vazgeç)\b")
-FUSION_MIN = 0.55  # kamera Nehir'i yalnız görüyorsa bu skorun üstü yeter     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
+FUSION_MIN = 0.62  # kamera Nehir'i yalnız görüyorsa bu skorun üstü yeter (Nehir canlı: 0.71-0.75; kamera dışı misafir 0.55'i geçebilirdi)     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
 _ONLY_NAME = re.compile(r"^\W*(?:" + WAKE.pattern + r")\W*$")
 
 
