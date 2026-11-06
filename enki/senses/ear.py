@@ -33,7 +33,7 @@ TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma mo
 STOP = re.compile(r"\bdur\b")
 CALL_S = 8.0
 YESNO = re.compile(r"\b(evet|hayır|yap|yapma|tamam|olur|olmaz|aynen|tabii|vazgeç)\b")
-FUSION_MIN = 0.62  # kamera Nehir'i yalnız görüyorsa bu skorun üstü yeter (Nehir canlı: 0.71-0.75; kamera dışı misafir 0.55'i geçebilirdi)     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
+     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
 _ONLY_NAME = re.compile(r"^\W*(?:" + WAKE.pattern + r")\W*$")
 
 
@@ -131,14 +131,13 @@ class EarSense:
         except Exception:
             log.exception("ses kimliği hata")
             return None, None
-        # Füzyon: kamera odada SADECE Nehir'i görüyorsa ses skoru düşük çıksa da konuşan odur
-        # (canlı mikrofonda Nehir 0.71-0.75 aldı; eşik 0.72'nin hemen altı onu misafir yapıyordu).
+        # Füzyon: kamera odada SADECE Nehir'i görüyorsa konuşan odur, ses skoru ne olursa olsun.
+        # Yüz ayrımı net (Nehir 0.72-0.77, başkası <0.15); ses değil (canlı Nehir 0.60-0.83, başkaları
+        # 0.52-0.67: aralıklar çakışıyor). Ses kimliği sadece kamera Nehir'i yalnız görmüyorsa karar verir.
         alone = self.alone_with_nehir()
-        if owner is False and score is not None:
-            log.info("füzyon: skor %.2f, kamerada yalnız Nehir: %s", score, alone)
-        if owner is False and score is not None and score >= FUSION_MIN and alone:
+        if owner is False and score is not None and alone:
             owner = True
-            log.info("ses kimliği: %.2f → Nehir (kamera: odada sadece o var)", score)
+            log.info("ses kimliği: %.2f → Nehir (kamera: odada sadece o var, ses skoru dikkate alınmadı)", score)
         elif score is not None:
             log.info("ses kimliği: %.2f → %s", score, "Nehir" if owner else "BAŞKASI")
         return owner, score
