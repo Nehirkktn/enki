@@ -17,7 +17,7 @@ log = logging.getLogger("enki.voiceid")
 
 SR = 16_000
 THRESHOLD = float(os.getenv("ENKI_SES_ESIK", "0.72"))
-MIN_S = 1.0
+MIN_S = 2.0  # 6 Kas: tek kelime ("Evet.", ~1 sn) Nehir için 0.49-0.52 verdi → kısa sesler güvenilmez
 ROOT = Path(__file__).resolve().parents[2]
 PATH = ROOT / "data" / "ses_kaydi.npz"
 
@@ -29,7 +29,7 @@ class ResemblyzerEncoder:
 
     def __call__(self, audio: np.ndarray) -> np.ndarray | None:
         wav = self._pre(audio.astype(np.float32), source_sr=SR)  # ses gücü normalize + sessizlik kırpma
-        if len(wav) < MIN_S * SR * 0.8:
+        if len(wav) < MIN_S * SR * 0.75:  # sessizlik kırpıldıktan sonra en az ~1.5 sn konuşma
             return None
         return self._enc.embed_utterance(wav)
 

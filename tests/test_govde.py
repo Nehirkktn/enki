@@ -236,7 +236,7 @@ class FakeEnc:
 def test_voiceid_owner_vs_guest(tmp_path):
     from enki.senses.voiceid import VoiceID, SR
     vid = VoiceID(tmp_path / "s.npz", encoder=FakeEnc())
-    nehir, misafir = np.full(SR * 2, 0.1, np.float32), np.full(SR * 2, -0.1, np.float32)
+    nehir, misafir = np.full(SR * 3, 0.1, np.float32), np.full(SR * 3, -0.1, np.float32)
     assert vid.is_owner(nehir) == (None, None)            # kayıt yok: karar yok
     for _ in range(3):
         vid.add(vid.embed(nehir))
@@ -244,4 +244,4 @@ def test_voiceid_owner_vs_guest(tmp_path):
     vid2 = VoiceID(tmp_path / "s.npz", encoder=FakeEnc())
     assert vid2.is_owner(nehir)[0] is True
     assert vid2.is_owner(misafir)[0] is False
-    assert vid2.is_owner(nehir[: SR // 2])[0] is None     # < 1 sn: güvenilmez
+    assert vid2.is_owner(nehir[: SR])[0] is None           # < 2 sn: güvenilmez
