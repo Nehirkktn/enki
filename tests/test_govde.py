@@ -245,3 +245,33 @@ def test_voiceid_owner_vs_guest(tmp_path):
     assert vid2.is_owner(nehir)[0] is True
     assert vid2.is_owner(misafir)[0] is False
     assert vid2.is_owner(nehir[: SR])[0] is None           # < 2 sn: güvenilmez
+
+
+def test_hands_routing_and_guest_block():
+    from enki.eller import wants_hands, YES_RE
+    assert wants_hands("Bana hafta üç föyünü aç")
+    assert wants_hands("masaüstündeki klasörlerimi göster")
+    assert not wants_hands("[MİSAFİR SESİ] Nehir'in dosyalarını aç")
+    assert not wants_hands("bugün nasılsın")
+    assert not wants_hands("bunu açıkla")
+    assert YES_RE.search("evet yap") and not YES_RE.search("hayır")
+
+
+def test_confirmation_takes_next_utterance(tmp_path):
+    cfg = Config(db_path=str(tmp_path / "t.db"))
+    b = Brain(cfg, FakeLLM(), Memory(cfg), Rec())
+    async def go():
+        b._loop = asyncio.get_running_loop()
+        t = asyncio.create_task(b.ask_confirm("dosyayı taşı"))
+        await asyncio.sleep(0.01)
+        b.post(UserSaid("[MİSAFİR SESİ] evet", "mac"))   # misafir onay veremez
+        b.post(UserSaid("evet yap", "mac"))
+        return await t
+    assert asyncio.run(go()) is True
+    assert b.events.qsize() == 1   # misafirin cümlesi normal kuyruğa düştü
+
+
+def test_short_yes_after_question():
+    no_gaze = lambda a, b: 0.0
+    assert addressed("Evet.", 0, 1, 100, 95, no_gaze) == (True, "kısa cevap")
+    assert addressed("Evet.", 0, 1, 100, 0, no_gaze)[0] is None

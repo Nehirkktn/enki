@@ -31,7 +31,9 @@ def tr_lower(s: str) -> str:
 TYPING_S = 90.0  # son klavye girişinden bu kadar sn sonrasına kadar "yazma modu"
 # Söz kesme SADECE "Enki dur" ile (Nehir'in kuralı): ikisi birden duyulmalı
 STOP = re.compile(r"\bdur\b")
-CALL_S = 8.0     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
+CALL_S = 8.0
+YESNO = re.compile(r"\b(evet|hayır|yap|yapma|tamam|olur|olmaz|aynen|tabii|vazgeç)\b")
+FUSION_MIN = 0.55  # kamera Nehir'i yalnız görüyorsa bu skorun üstü yeter     # sadece "Enki" denirse: bu kadar sn içindeki sonraki cümle ona söylenmiş sayılır
 _ONLY_NAME = re.compile(r"^\W*(?:" + WAKE.pattern + r")\W*$")
 
 
@@ -79,6 +81,8 @@ def addressed(text: str, t0: float, t1: float, now: float, last_spoke: float,
     if now - last_typed < TYPING_S:
         return None, "yazıyor"
     if len(text.split()) < 2:
+        if now - last_spoke < follow_up_s and YESNO.search(tr_lower(text)):
+            return True, "kısa cevap"  # Enki soru sordu: "evet" / "hayır" tek kelime ama gerçek
         return None, "tek kelime"  # gürültüden tek kelime uydurmalar ("Duyursun") sohbet/bakışla geçmesin
     if now - last_spoke < follow_up_s:
         return True, "sohbet devam"
@@ -91,11 +95,12 @@ class EarSense:
                  last_spoke: Callable[[], float], gaze: Callable[[float, float], float] | None = None,
                  whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9,
                  speaking: Callable[[], str] = lambda: "", interrupt: Callable[[], None] = lambda: None,
-                 voiceid=None):
+                 voiceid=None, alone_with_nehir: Callable[[], bool] = lambda: False):
         self.post, self.muted, self.last_spoke, self.gaze, self.body = post, muted, last_spoke, gaze, body
         self.last_typed = last_typed
         self.speaking, self.interrupt = speaking, interrupt
         self.voiceid = voiceid  # VoiceID | None: kayıt yoksa herkes Nehir sayılır (eski davranış)
+        self.alone_with_nehir = alone_with_nehir  # kamera: odada sadece Nehir var mı
         self._called_at = -1e9
         if whisper == "auto":
             whisper = "turbo" if platform.system() == "Darwin" and platform.machine() == "arm64" else "small"
@@ -126,7 +131,12 @@ class EarSense:
         except Exception:
             log.exception("ses kimliği hata")
             return None, None
-        if score is not None:
+        # Füzyon: kamera odada SADECE Nehir'i görüyorsa ses skoru düşük çıksa da konuşan odur
+        # (canlı mikrofonda Nehir 0.71-0.75 aldı; eşik 0.72'nin hemen altı onu misafir yapıyordu).
+        if owner is False and score is not None and score >= FUSION_MIN and self.alone_with_nehir():
+            owner = True
+            log.info("ses kimliği: %.2f → Nehir (kamera: odada sadece o var)", score)
+        elif score is not None:
             log.info("ses kimliği: %.2f → %s", score, "Nehir" if owner else "BAŞKASI")
         return owner, score
 

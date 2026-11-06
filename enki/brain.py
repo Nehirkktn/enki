@@ -110,7 +110,9 @@ class Brain:
         self.cfg, self.llm, self.mem, self.speaker = cfg, llm, memory, speaker
         self.eyes = eyes  # () -> jpeg bytes | None
         self.company = None  # () -> int: kamerada Nehir dışında kaç kişi var
-        self.observers: list = []  # her olayı izleyenler (ör. yüz ekranı: sahibi/yabancıyı görünce gözler)
+        self.observers: list = []
+        self.hands = None                 # eller.Hands | None
+        self._confirm: asyncio.Future | None = None  # eller onay bekliyorsa: sıradaki UserSaid cevaptır  # her olayı izleyenler (ör. yüz ekranı: sahibi/yabancıyı görünce gözler)
         self.fsm = StateMachine()
         self.rng = rng or random.Random()
         self.initiative = Initiative(cfg, rng=self.rng)
@@ -121,6 +123,10 @@ class Brain:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def post(self, ev: Event) -> None:
+        if self._confirm is not None and not self._confirm.done() and isinstance(ev, UserSaid) \
+                and not ev.text.startswith("[MİSAFİR SESİ]"):
+            self._confirm.set_result(ev.text)  # eller'in sorusuna cevap: kuyruğa girmez
+            return
         self.events.put_nowait(ev)
 
     def post_threadsafe(self, ev: Event) -> None:
@@ -128,7 +134,22 @@ class Brain:
         if self._loop is None:
             self.events.put_nowait(ev)
         else:
-            self._loop.call_soon_threadsafe(self.events.put_nowait, ev)
+            self._loop.call_soon_threadsafe(self.post, ev)
+
+    async def ask_confirm(self, soru: str, timeout: float = 45.0) -> bool:
+        """Eller onay istiyor: Enki sesli sorar, Nehir'in sıradaki cümlesi cevaptır."""
+        from .eller import YES_RE
+        self._confirm = asyncio.get_running_loop().create_future()
+        await self.speaker.say(f"[stern] Onay lazım: {soru}. Yapayım mı?")
+        try:
+            ans = await asyncio.wait_for(self._confirm, timeout)
+        except asyncio.TimeoutError:
+            ans = ""
+        finally:
+            self._confirm = None
+        ok = bool(YES_RE.search(ans))
+        log.info("onay: %r → %s", ans, ok)
+        return ok
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -219,7 +240,15 @@ class Brain:
                 ]
                 log.info("kamera karesi eklendi (%d KB)", len(jpg) // 1024)
         t0 = time.monotonic()
-        raw = await self.llm.complete(persona.CORE, context, msgs)
+        from .eller import wants_hands
+        if self.hands and store_as is not None and wants_hands(user_text):
+            try:
+                raw = await self.hands.run(user_text, context)
+            except Exception as e:
+                log.exception("eller hata")
+                raw = f"[confused] Ellerim takıldı: {type(e).__name__}. Bir daha dener misin?"
+        else:
+            raw = await self.llm.complete(persona.CORE, context, msgs)
         log.info("beyin %.1f sn (%s)", time.monotonic() - t0, getattr(self.llm, "name", "?"))
         reply = parse_reply(raw)
 

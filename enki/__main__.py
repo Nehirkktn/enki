@@ -236,6 +236,13 @@ async def amain(args) -> None:
         lambda a, s, b: b.name == "THINKING" and print(f"\r{DIM}…{RESET}", end="", flush=True)
     )
 
+    try:
+        from .eller import Hands
+        brain.hands = Hands(loop, brain.ask_confirm, hub)
+        _status("eller", True, "(dosya/uygulama/site; riskli işte sesli onay ister)")
+    except Exception as e:
+        _status("eller", False, str(e)[:100])
+
     vision = None
     if not args.no_cam:
         try:
@@ -256,7 +263,10 @@ async def amain(args) -> None:
                 voiceid = VoiceID()
             except Exception as e:
                 logging.getLogger("enki").warning("ses kimliği yok: %s", e)
+            def alone_with_nehir() -> bool:
+                return bool(vision and vision.ok and "mac" in brain.present and vision.others == 0)
             ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke, voiceid=voiceid,
+                           alone_with_nehir=alone_with_nehir,
                            gaze=vision.gaze_fraction if vision else None, whisper=args.whisper,
                            last_typed=lambda: TYPED[0], speaking=lambda: speaker.current,
                            interrupt=lambda: loop.call_soon_threadsafe(speaker.interrupt))
