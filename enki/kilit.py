@@ -6,8 +6,9 @@ Enki'den ayrı süreç. Enki çökse ya da kapatılsa da bu kalır; Ctrl+C / kil
   • Event tap: tüm klavye + fare + trackpad olayları yutulur; imleç donar (fare imleçten ayrılır)
   • Açılış: Enki data/kilit.ac'ye token yazınca (yüzünü gördü) ya da ekranda Enki şifresi + Enter
 İzin: Terminal'e Gizlilik → Erişilebilirlik izni gerekir (eller için zaten lazım).
-İzin yoksa olay yakalanamaz → yedek: macOS'un kendi kilidi (ekran uyur, Mac şifresi/Touch ID ister).
-Çıkış kodları: 0 = açıldı, 2 = paket yok, 3 = event tap kurulamadı (yedeğe düştü).
+İzin yoksa (event tap kurulamaz) → kısıtlı kilit: aynı siyah ekran + kiosk + Cmd+Q engeli, şifre kutusu;
+imleç oynar ama tıklamalar ve tuşlar sadece kilit penceresine gider. macOS da izin penceresini açar.
+Çıkış kodları: 0 = açıldı, 2 = paket yok (yedek: ekranı uyut).
 """
 from __future__ import annotations
 
@@ -47,8 +48,26 @@ def main() -> int:
 
     from .sifre import verify, wait_left
 
+    class KilitPenceresi(AppKit.NSWindow):  # kenarlıksız pencere normalde klavye alamaz
+        def canBecomeKeyWindow(self):
+            return True
+
+        def canBecomeMainWindow(self):
+            return True
+
+    class Delege(AppKit.NSObject):
+        def applicationShouldTerminate_(self, sender):  # Cmd+Q / "Çık" → hayır
+            return 0  # NSTerminateCancel
+
+        def sifreGirildi_(self, sender):
+            state["buf"] = str(sender.stringValue())
+            sender.setStringValue_("")
+            submit()
+
     app = AppKit.NSApplication.sharedApplication()
     app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    delege = Delege.alloc().init()
+    app.setDelegate_(delege)
 
     # ---------------------------------------------------------------- pencereler
     windows, dots_labels, msg_labels = [], [], []
@@ -66,7 +85,7 @@ def main() -> int:
     grey = AppKit.NSColor.colorWithCalibratedWhite_alpha_(0.6, 1.0)
     for screen in AppKit.NSScreen.screens():
         fr = screen.frame()
-        w = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        w = KilitPenceresi.alloc().initWithContentRect_styleMask_backing_defer_(
             fr, AppKit.NSWindowStyleMaskBorderless, AppKit.NSBackingStoreBuffered, False)
         w.setLevel_(AppKit.NSScreenSaverWindowLevel)
         w.setBackgroundColor_(AppKit.NSColor.blackColor())
@@ -100,7 +119,7 @@ def main() -> int:
     app.activateIgnoringOtherApps_(True)
 
     # ---------------------------------------------------------------- olay yakalama
-    state = {"buf": "", "tap": None, "done": False}
+    state = {"buf": "", "tap": None, "done": False, "alan": None}
 
     def show(msg: str | None = None) -> None:
         for d in dots_labels:
@@ -161,20 +180,34 @@ def main() -> int:
                                   Quartz.kCGEventTapOptionDefault,
                                   getattr(Quartz, "kCGEventMaskForAllEvents", 0xFFFFFFFFFFFFFFFF), cb, None)
     if tap is None:
-        log("event tap kurulamadı: Terminal'e Erişilebilirlik izni ver → şimdilik macOS kilidi")
-        for w in windows:
-            w.orderOut_(None)
-        app.setPresentationOptions_(AppKit.NSApplicationPresentationDefault)
-        macos_kilidi()
-        PID.unlink(missing_ok=True)
-        return 3
-    state["tap"] = tap
-    src = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
-    Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), src, Quartz.kCFRunLoopCommonModes)
-    Quartz.CGEventTapEnable(tap, True)
-    Quartz.CGAssociateMouseAndMouseCursorPosition(False)  # fare oynasa da imleç kıpırdamaz
-    Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
-    log("kilitli")
+        log("event tap kurulamadı (Erişilebilirlik izni yok) → kısıtlı kilit: siyah ekran + şifre kutusu")
+        try:  # macOS'un "Erişilebilirlik izni ver" penceresini aç
+            from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+            AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
+        except Exception:
+            pass
+        w = windows[0]
+        W = w.frame().size.width
+        H = w.frame().size.height
+        alan = AppKit.NSSecureTextField.alloc().initWithFrame_(AppKit.NSMakeRect(W / 2 - 150, H / 2 - 105, 300, 32))
+        alan.setPlaceholderString_("Enki şifresi + Enter")
+        alan.setAlignment_(AppKit.NSTextAlignmentCenter)
+        alan.setFont_(AppKit.NSFont.systemFontOfSize_(18))
+        alan.setTarget_(delege)
+        alan.setAction_("sifreGirildi:")
+        w.contentView().addSubview_(alan)
+        dots_labels[0].setHidden_(True)
+        state["alan"] = alan
+        for m in msg_labels:
+            m.setStringValue_("Sahibi kameraya bakınca açılır.  (Erişilebilirlik izni yok: kısıtlı mod)")
+    else:
+        state["tap"] = tap
+        src = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), src, Quartz.kCFRunLoopCommonModes)
+        Quartz.CGEventTapEnable(tap, True)
+        Quartz.CGAssociateMouseAndMouseCursorPosition(False)  # fare oynasa da imleç kıpırdamaz
+        Quartz.CGDisplayHideCursor(Quartz.CGMainDisplayID())
+    log("kilitli" + ("" if tap is not None else " (kısıtlı)"))
 
     # ---------------------------------------------------------------- Enki'den açılış + ön planda kalma
     def poll() -> None:
@@ -187,6 +220,9 @@ def main() -> int:
         app.activateIgnoringOtherApps_(True)
         for w in windows:
             w.orderFrontRegardless()
+        if (alan := state["alan"]) is not None and not windows[0].isKeyWindow():
+            windows[0].makeKeyAndOrderFront_(None)
+            windows[0].makeFirstResponder_(alan)
         AppHelper.callLater(0.3, poll)
 
     AppHelper.callLater(0.3, poll)
