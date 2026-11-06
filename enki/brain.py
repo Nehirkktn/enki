@@ -71,6 +71,10 @@ _MEM_RE = re.compile(r"<hafiza>(.*?)(?:</hafiza>|$)", re.S | re.I)
 _SILENT = "[SUS]"
 _MD_RE = re.compile(r"[*_#`>]+")
 # Görmeyle ilgili soru → kameranın anlık karesi Claude'a gider (her mesajda değil: gecikme + maliyet)
+# Sunum modu: sadece doğrulanmış Nehir açıp kapatabilir
+DEMO_ON = re.compile(r"(sunum|tanıtım|misafir) modu(nu|na)? (aç|başlat|geç|açık)|herkese izin ver|herkesle konuşabilirsin", re.I)
+DEMO_OFF = re.compile(r"(sunum|tanıtım|misafir) modu(nu)? (kapat|bitir|sonlandır)|sunum bitti|tanıtım bitti", re.I)
+DEMO_MIN = 90  # unutulursa kendiliğinden kapanır
 VISUAL_RE = re.compile(r"\b(gör|bak[ıaı]|kamera|giy|elimde|saçım|yüzüm|suratım|odam|masam|arkam|ışı[kğ]|"
                        r"karanlık|ne yapıyorum|neredeyim|kıyafet|tişört|gözlük|kim var|yanımda)", re.I)
 
@@ -112,6 +116,7 @@ class Brain:
         self.company = None  # () -> int: kamerada Nehir dışında kaç kişi var
         self.observers: list = []
         self.hands = None                 # eller.Hands | None
+        self.demo_until = 0.0             # sunum modu bitiş zamanı (time.time)
         self._confirm: asyncio.Future | None = None  # eller onay bekliyorsa: sıradaki UserSaid cevaptır  # her olayı izleyenler (ör. yüz ekranı: sahibi/yabancıyı görünce gözler)
         self.fsm = StateMachine()
         self.rng = rng or random.Random()
@@ -135,6 +140,10 @@ class Brain:
             self.events.put_nowait(ev)
         else:
             self._loop.call_soon_threadsafe(self.post, ev)
+
+    @property
+    def demo_active(self) -> bool:
+        return time.time() < self.demo_until
 
     def stranger_at_mac(self) -> bool:
         """Kamera Mac'in başında Nehir'i görmüyor ama tanımadığı birini görüyor."""
@@ -188,6 +197,13 @@ class Brain:
                 if body == "konsol" and self.stranger_at_mac() and not text.startswith("[MİSAFİR"):
                     text = f"[MİSAFİR] {text}"  # klavyede yazan Nehir değil: kamera onu görmüyor, başkasını görüyor
                 self.active_body = body
+                if not text.startswith("[MİSAFİR"):  # sadece Nehir açıp kapatabilir
+                    if DEMO_OFF.search(text):
+                        self.demo_until = 0.0
+                        log.info("sunum modu kapandı")
+                    elif DEMO_ON.search(text):
+                        self.demo_until = time.time() + DEMO_MIN * 60
+                        log.info("sunum modu açıldı (%d dk)", DEMO_MIN)
                 self.initiative.on_user_spoke()
                 self.fsm.fire(Sigma.WAKE)
                 self.fsm.fire(Sigma.HEARD)
@@ -231,7 +247,10 @@ class Brain:
         if store_as is not None:
             self.mem.add_turn("user", store_as)
 
-        context = persona.dynamic_context(self.mem.facts(), recalled, datetime.now(),
+        guest = user_text.startswith("[MİSAFİR")
+        # Misafir konuşuyorsa Nehir hakkındaki bilgiler bağlama HİÇ girmez: modelin sızdırabileceği bir şey kalmaz
+        context = persona.dynamic_context([] if guest else self.mem.facts(), [] if guest else recalled,
+                                          datetime.now(), demo=self.demo_active,
                                           body=self.active_body, present=sorted(self.present),
                                           others=self.company() if self.company else 0)
         msgs = to_messages(recent, user_text)

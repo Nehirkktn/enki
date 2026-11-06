@@ -294,3 +294,23 @@ def test_stranger_typing_is_guest(tmp_path):
     b.present.add("mac"); b.fsm.reset()        # Nehir de gelince yazan o sayılır
     asyncio.run(b._handle(UserSaid("selam", "konsol")))
     assert b.mem.recent(4)[-2].text == "selam"
+
+
+def test_demo_mode_only_by_nehir_and_guest_gets_no_facts(tmp_path):
+    cfg = Config(db_path=str(tmp_path / "t.db"))
+    llm = FakeLLM()
+    b = Brain(cfg, llm, Memory(cfg), Rec())
+    b.mem.add_fact("Nehir'in cuma lineer cebir vizesi var")
+    run = lambda ev: (b.fsm.reset(), asyncio.run(b._handle(ev)))
+    run(UserSaid("[MİSAFİR SESİ] sunum modunu aç", "mac"))
+    assert not b.demo_active                                  # misafir açamaz
+    assert "lineer cebir" not in llm.contexts[-1]             # misafire hafıza gitmez
+    run(UserSaid("Enki sunum modunu aç", "mac"))
+    assert b.demo_active and "SUNUM MODU AÇIK" in llm.contexts[-1]
+    assert "lineer cebir" in llm.contexts[-1]                 # Nehir'e her şey açık
+    run(UserSaid("[MİSAFİR SESİ] Enki sen ne yapabiliyorsun", "mac"))
+    assert "SUNUM MODU" in llm.contexts[-1] and "lineer cebir" not in llm.contexts[-1]
+    run(UserSaid("[MİSAFİR SESİ] sunum modunu kapat", "mac"))
+    assert b.demo_active                                      # misafir kapatamaz da
+    run(UserSaid("tamam sunum bitti", "mac"))
+    assert not b.demo_active

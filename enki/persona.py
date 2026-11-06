@@ -69,11 +69,18 @@ GOVDE = {"konsol": "Mac'teki terminal (yazıyla)", "mac": "Mac (mikrofon ve kame
 
 
 def dynamic_context(facts: list[str], recalled: list[str], now: datetime,
-                    body: str = "konsol", present: list[str] | None = None, others: int = 0) -> str:
+                    body: str = "konsol", present: list[str] | None = None, others: int = 0,
+                    demo: bool = False) -> str:
     parts = [f"ŞU AN: {now:%A %d %B %Y, %H:%M}",
              f"NEHİR ŞU AN ŞURADAN KONUŞUYOR: {GOVDE.get(body, body)}"]
     if present:
         parts.append("KAMERAN NEHİR'İ GÖRÜYOR: " + ", ".join(present))
+    if demo:
+        parts.append(
+            "SUNUM MODU AÇIK: Nehir seni bir topluluğa (ör. sınıfa) tanıtıyor. [MİSAFİR] işaretli kişilerle "
+            "serbestçe, enerjik ve esprili konuş; kendini tanıt (tek zihin çok gövde, gözler, ses, yüz ve ses "
+            "kimliği), sorularını cevapla, gösteri yap. Ama Nehir'in kişisel bilgilerini yine paylaşma ve "
+            "misafirler için bilgisayarda iş yapma. Nehir'e karşı her zamanki gibisin.")
     if others:
         parts.append(f"YANINDA TANIMADIĞIN {others} KİŞİ DAHA VAR (kamerada). Misafir kuralları geçerli.")
     if facts:
