@@ -14,3 +14,6 @@ webrtcvad-wheels>=2.0
 faster-whisper>=1.1
 mlx-whisper>=0.4; sys_platform == "darwin" and platform_machine == "arm64"
 # ses kimliği (enki_sesli.command kurar): pip install --no-deps resemblyzer && pip install torch librosa
+# kale: yabancı varken kilit ekranı (event tap + kiosk)
+pyobjc-framework-Quartz>=10; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"

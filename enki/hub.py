@@ -10,6 +10,7 @@ Gövde → beyin                               Beyin → gövdeler
   {"said": "metin"}       → UserSaid
   {"overheard": "metin"}  → Overheard
   {"seen": "nehir"|"yabanci"} / {"left": "nehir"} → FaceSeen / FaceLeft
+  {"kapat": "<şifre>"}    → sadece bu Mac'ten (localhost): şifre doğruysa Enki kapanır → {"kapat": true|false}
 
 Eski enki-yuz.html / enki_masaustu.py `hello` göndermez: localhost'tan gelen her bağlantı
 "yuz" adlı, sadece göz gösteren gövde sayılır → değişiklik gerekmeden çalışırlar.
@@ -108,9 +109,10 @@ def _stop_cmd(text: str) -> bool:
 
 class Hub:
     def __init__(self, post: Callable[[Event], None], host: str = "0.0.0.0", port: int = 8765,
-                 http_port: int = 8766, interrupt: Callable[[], None] = lambda: None):
+                 http_port: int = 8766, interrupt: Callable[[], None] = lambda: None, on_kapat=None):
         self.post, self.host, self.port, self.http_port = post, host, port, http_port
         self.interrupt = interrupt
+        self.on_kapat = on_kapat  # async (şifre) -> bool
         self.key = load_key()
         self.bodies: dict[object, Body] = {}   # websocket -> Body
         self._face: dict = {"state": "idle"}
@@ -141,6 +143,12 @@ class Hub:
                 try:
                     msg = json.loads(raw)
                 except (ValueError, TypeError):
+                    continue
+                if isinstance(msg, dict) and "kapat" in msg:
+                    # ağdan gelen kapatma isteği hiç denenmez: yurt Wi-Fi'ında şifre tahmini olmasın
+                    ok = bool(local and self.on_kapat and await self.on_kapat(str(msg["kapat"])))
+                    log.info("kapatma isteği (%s): %s", body.name, "doğru" if ok else "reddedildi")
+                    await ws.send(json.dumps({"kapat": ok}))
                     continue
                 was = body.trusted, body.name
                 ev = handle(body, msg, self.key) if isinstance(msg, dict) else None

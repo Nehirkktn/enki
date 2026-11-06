@@ -59,7 +59,12 @@ class Shutdown:
     pass
 
 
-Event = UserSaid | Overheard | FaceSeen | FaceLeft | Tick | Shutdown
+@dataclass(frozen=True, slots=True)
+class Say:  # LLM'siz, hazır cümle (kilit, şifre): sıradaki konuşma olarak söylenir
+    text: str
+
+
+Event = UserSaid | Overheard | FaceSeen | FaceLeft | Tick | Shutdown | Say
 
 
 class Speaker(Protocol):
@@ -74,7 +79,9 @@ _MD_RE = re.compile(r"[*_#`>]+")
 # Sunum modu: sadece doğrulanmış Nehir açıp kapatabilir
 DEMO_ON = re.compile(r"(sunum|tanıtım|misafir) modu(nu|na)? (aç|başlat|geç|açık)|herkese izin ver|herkesle konuşabilirsin", re.I)
 DEMO_OFF = re.compile(r"(sunum|tanıtım|misafir) modu(nu)? (kapat|bitir|sonlandır)|sunum bitti|tanıtım bitti", re.I)
-DEMO_MIN = 90  # unutulursa kendiliğinden kapanır
+DEMO_MIN = 90
+# "Enki kapan" → kapanmaz: şifre sadece klavyeden (sesle söylenen şifreyi yanındaki herkes duyar)
+KAPAN_RE = re.compile(r"(kendini kapat|\bkapan\b|kapan(ır mısın|sana|abilir)|enki'?yi kapat|seni kapat|uyu artık|programı kapat)", re.I)  # unutulursa kendiliğinden kapanır
 VISUAL_RE = re.compile(r"\b(gör|bak[ıaı]|kamera|giy|elimde|saçım|yüzüm|suratım|odam|masam|arkam|ışı[kğ]|"
                        r"karanlık|ne yapıyorum|neredeyim|kıyafet|tişört|gözlük|kim var|yanımda)", re.I)
 
@@ -116,6 +123,7 @@ class Brain:
         self.company = None  # () -> int: kamerada Nehir dışında kaç kişi var
         self.observers: list = []
         self.hands = None                 # eller.Hands | None
+        self.locked = lambda: False       # kale: bilgisayar kilitliyken eller çalışmaz
         self.demo_until = 0.0             # sunum modu bitiş zamanı (time.time)
         self._confirm: asyncio.Future | None = None  # eller onay bekliyorsa: sıradaki UserSaid cevaptır  # her olayı izleyenler (ör. yüz ekranı: sahibi/yabancıyı görünce gözler)
         self.fsm = StateMachine()
@@ -193,10 +201,21 @@ class Brain:
             except Exception:
                 log.exception("observer")
         match ev:
+            case Say(text):
+                if self.fsm.q is not Q.IDLE:
+                    self.fsm.reset()
+                self.fsm.fire(Sigma.INITIATE)
+                self.fsm.fire(Sigma.REPLY_READY)
+                await self.speaker.say(text)
+                self.fsm.fire(Sigma.DONE_SPEAKING)
             case UserSaid(text, body):
                 if body == "konsol" and self.stranger_at_mac() and not text.startswith("[MİSAFİR"):
                     text = f"[MİSAFİR] {text}"  # klavyede yazan Nehir değil: kamera onu görmüyor, başkasını görüyor
                 self.active_body = body
+                if KAPAN_RE.search(text):
+                    self.post(Say("[stern] Beni sadece Nehir kapatabilir." if text.startswith("[MİSAFİR")
+                                  else "[smug] Şifresiz kapanmam. Terminal'e yaz: enki --kapat"))
+                    return
                 if not text.startswith("[MİSAFİR"):  # sadece Nehir açıp kapatabilir
                     if DEMO_OFF.search(text):
                         self.demo_until = 0.0
@@ -266,7 +285,9 @@ class Brain:
                 log.info("kamera karesi eklendi (%d KB)", len(jpg) // 1024)
         t0 = time.monotonic()
         from .eller import wants_hands
-        if self.hands and store_as is not None and wants_hands(user_text):
+        if self.hands and store_as is not None and wants_hands(user_text) and self.locked():
+            raw = "[stern] Bilgisayar kilitli. Önce kameraya görün, kilidi açayım."
+        elif self.hands and store_as is not None and wants_hands(user_text):
             try:
                 raw = await self.hands.run(user_text, context)
             except Exception as e:

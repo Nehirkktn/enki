@@ -14,20 +14,27 @@
   Enki konuşurken "Enki dur" de (ya da yaz): susar
   Ayrıntılı kayıt: data/enki.log (göz, kulak, gövde ne yaptı)
   /hafiza                   # Enki ne biliyor
-  /cik
+  /cik                      # şifre sorar (şifre konduysa Ctrl+C de işlemez)
+  python -m enki --sifre    # şifre koy / değiştir (enki_sifre.command)
+  python -m enki --kapat    # çalışan Enki'yi şifreyle kapat (enki_kapat.command)
+Kale: kamera seni görmüyor + yabancı görüyorsa Mac kilitlenir; yüzünü görünce ya da kilit ekranına
+şifreyi yazıp Enter'a basınca açılır (enki/kale.py, enki/kilit.py). ENKI_KILIT=0 kapatır.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import getpass
 import os
+import signal
 import sys
 import threading
 import time
 from pathlib import Path
 
-from .brain import Brain, FaceLeft, FaceSeen, Overheard, Shutdown, UserSaid
+from . import sifre
+from .brain import Brain, FaceLeft, FaceSeen, Overheard, Say, Shutdown, UserSaid
 from .config import Config
 from .govde import BodySpeaker, fsm_face
 from .llm import build_llm
@@ -66,14 +73,15 @@ def gor_raporu() -> str:
     return f"  durum: {p.state.name} · yüz sayısı: {len(p.faces)} · benzerlik: {sim} (eşik 0.36) · bakıyor: {p.facing}"
 
 
-async def stdin_loop(brain: Brain, mem: Memory, interrupt=lambda: None) -> None:
+async def stdin_loop(brain: Brain, mem: Memory, interrupt=lambda: None, kapat=None) -> None:
     loop = asyncio.get_running_loop()
     print(f"{DIM}sen ›{RESET} ", end="", flush=True)
     while True:
         line = await loop.run_in_executor(None, sys.stdin.readline)
         if not line:
-            brain.post(Shutdown())
-            return
+            if not sifre.is_set():
+                brain.post(Shutdown())
+            return  # şifre varsa Ctrl+D kapatmaz: sadece klavye okuması biter
         line = line.strip()
         TYPED[0] = time.monotonic()
         if not line:
@@ -82,9 +90,12 @@ async def stdin_loop(brain: Brain, mem: Memory, interrupt=lambda: None) -> None:
         if stop_command(line):  # yazarak da sadece "enki dur" keser
             interrupt()
             continue
-        if line == "/cik":
-            brain.post(Shutdown())
-            return
+        if line in ("/cik", "/kapat"):
+            pw = await loop.run_in_executor(None, getpass.getpass, "  şifre: ") if sifre.is_set() else ""
+            if await kapat(pw):
+                return
+            print(f"{DIM}sen ›{RESET} ", end="", flush=True)
+            continue
         if line == "/hafiza":
             if brain.stranger_at_mac():
                 print("  Hafıza sadece Nehir'e açık.")
@@ -150,11 +161,38 @@ async def client(ws) -> None:
             line = await loop.run_in_executor(None, sys.stdin.readline)
             if not line or line.strip() == "/cik":
                 return
+            if line.strip() == "/kapat":
+                rx.cancel()
+                await kapat_istegi(ws)
+                return
             if line.strip():
                 await ws.send(json.dumps({"said": line.strip()}))
     finally:
         rx.cancel()
         await ws.close()
+
+
+async def kapat_istegi(ws=None) -> None:
+    """Çalışan Enki'ye şifreyle kapat isteği (sadece bu Mac'ten kabul edilir)."""
+    import json
+    if ws is None and (ws := await running_enki()) is None:
+        print("Enki çalışmıyor.")
+        return
+    loop = asyncio.get_running_loop()
+    pw = await loop.run_in_executor(None, getpass.getpass, "Enki şifresi: ")
+    await ws.send(json.dumps({"kapat": pw}))
+    try:
+        while "kapat" not in (m := json.loads(await asyncio.wait_for(ws.recv(), 10))):
+            pass
+        ok = m["kapat"]
+    except Exception:
+        ok = False
+    if ok:
+        print("✓ Enki kapanıyor.")
+    else:
+        w = sifre.wait_left()
+        print(f"✗ Yanlış şifre." + (f" {w:.0f} sn bekle." if w else ""))
+    await ws.close()
 
 
 def launch_desktop_face():
@@ -177,6 +215,9 @@ def _status(name: str, ok: bool, note: str = "") -> None:
 
 
 async def amain(args) -> None:
+    if args.kapat:
+        await kapat_istegi()
+        return
     if not args.arkaplan and (ws := await running_enki()):
         await client(ws)
         return
@@ -205,13 +246,34 @@ async def amain(args) -> None:
     muted = threading.Event()
     brain = Brain(cfg, llm, mem, console)
     print(f"{CYAN}Enki uyanıyor…{RESET}")
+    loop = asyncio.get_running_loop()
+    kale_ref = [None]
+
+    if sifre.is_set():  # şifre varken sinyalle kapanmaz: Ctrl+C, kill, pencereyi kapatmak (arka planda)
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGTSTP) + ((signal.SIGHUP,) if args.arkaplan else ()):
+            signal.signal(sig, signal.SIG_IGN)
+
+    async def kapat(pw: str) -> bool:
+        ok = not sifre.is_set() or await loop.run_in_executor(None, sifre.verify, pw)
+        if not ok:
+            log = logging.getLogger("enki")
+            log.warning("yanlış kapatma şifresi")
+            brain.post(Say("[stern] Yanlış şifre. Kapanmıyorum."))
+            return False
+        if (k := kale_ref[0]) and k.kilitli:
+            k.ac("kapanış")
+        if args.arkaplan:
+            sifre.mark_stopped()  # bekçi yeniden açmasın
+        brain.post(Say("[smug] Şifre doğru. Kapanıyorum, görüşürüz."))
+        brain.post(Shutdown())
+        return True
 
     hub = None
     speaker_ref = [None]  # hub, konuşmacıdan önce kuruluyor
     if not args.no_hub:
         from .hub import Hub
         try:
-            hub = Hub(brain.post, interrupt=lambda: speaker_ref[0] and speaker_ref[0].interrupt())
+            hub = Hub(brain.post, interrupt=lambda: speaker_ref[0] and speaker_ref[0].interrupt(), on_kapat=kapat)
             await hub.start()
             _status("gövde", True, f"telefon → {hub.phone_url()}")
         except Exception as e:  # port dolu: eski yuz_koprusu / enki_eller açık olabilir
@@ -221,7 +283,6 @@ async def amain(args) -> None:
     speaker = BodySpeaker(hub, local, console, lambda: brain.active_body, voice, muted)
     brain.speaker = speaker
     speaker_ref[0] = speaker
-    loop = asyncio.get_running_loop()
     if hub:
         brain.fsm.subscribe(lambda a, s, b: (f := fsm_face(a, s, b)) and loop.create_task(hub.face(f)))
 
@@ -257,6 +318,27 @@ async def amain(args) -> None:
             _status("göz", True, "(/gor ile kontrol et)")
         except Exception as e:
             _status("göz", False, str(e))
+    if os.getenv("ENKI_KILIT", "1") == "0":
+        _status("kilit", False, "(ENKI_KILIT=0)")
+    elif not sifre.is_set():
+        _status("kilit", False, "(önce şifre koy: enki_sifre.command)")
+    elif vision is None or sys.platform != "darwin":
+        _status("kilit", False, "(kamera yok)")
+    else:
+        from .kale import Kale
+
+        def on_kilit() -> None:
+            brain.post(Say("[stern] Seni tanımıyorum. Bilgisayarı kilitledim, sahibi gelince açılır."))
+            if hub:
+                loop.create_task(hub.face("angry"))
+
+        def on_acik(neden: str) -> None:
+            if neden == "yuz":
+                brain.post(Say("[smug] Hoş geldin. Kilidi açtım."))
+        kale = Kale(vision, on_kilit, on_acik).start(loop)
+        kale_ref[0] = kale
+        brain.locked = lambda: kale.kilitli
+        _status("kilit", True, "(yabancı + sen yoksan kilitlenir; yüzün ya da şifre açar)")
     if not args.no_mic:
         try:
             from .senses.ear import EarSense
@@ -293,7 +375,7 @@ async def amain(args) -> None:
         face_proc = launch_desktop_face()
 
     # arka plan modunda klavye yok: stdin kapalı olur, okumaya çalışırsak Enki kendini kapatırdı
-    reader = None if args.arkaplan else asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt))
+    reader = None if args.arkaplan else asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt, kapat))
     try:
         await brain.run()
     finally:
@@ -319,8 +401,16 @@ def main() -> None:
     ap.add_argument("--ses-kayit", action="store_true", help="sesini öğret ve çık")
     ap.add_argument("--yuzsuz", action="store_true", help="masaüstü yüzünü açma")
     ap.add_argument("--arkaplan", action="store_true", help="servis modu: klavye yok, launchd başlatır")
+    ap.add_argument("--sifre", action="store_true", help="şifre koy / değiştir")
+    ap.add_argument("--sifre-kontrol", action="store_true", help="şifre sor, doğruysa 0 ile çık (kaldırma betiği)")
+    ap.add_argument("--kapat", action="store_true", help="çalışan Enki'yi şifreyle kapat")
     args = ap.parse_args()
     args.sessiz = args.sessiz or bool(os.getenv("ENKI_SESSIZ"))
+    if args.sifre:
+        sifre.cli_set()
+        return
+    if args.sifre_kontrol:
+        sys.exit(sifre.cli_check())
     try:
         if args.ses_kayit:
             from .senses.voiceid import enroll as ses_enroll
