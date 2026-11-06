@@ -110,6 +110,7 @@ class Brain:
         self.cfg, self.llm, self.mem, self.speaker = cfg, llm, memory, speaker
         self.eyes = eyes  # () -> jpeg bytes | None
         self.company = None  # () -> int: kamerada Nehir dışında kaç kişi var
+        self.observers: list = []  # her olayı izleyenler (ör. yüz ekranı: sahibi/yabancıyı görünce gözler)
         self.fsm = StateMachine()
         self.rng = rng or random.Random()
         self.initiative = Initiative(cfg, rng=self.rng)
@@ -152,6 +153,11 @@ class Brain:
                 self.post(Tick())
 
     async def _handle(self, ev: Event) -> None:
+        for fn in self.observers:
+            try:
+                fn(ev)
+            except Exception:
+                log.exception("observer")
         match ev:
             case UserSaid(text, body):
                 self.active_body = body

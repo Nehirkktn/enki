@@ -25,7 +25,7 @@ import threading
 import time
 from pathlib import Path
 
-from .brain import Brain, FaceSeen, Overheard, Shutdown, UserSaid
+from .brain import Brain, FaceLeft, FaceSeen, Overheard, Shutdown, UserSaid
 from .config import Config
 from .govde import BodySpeaker, fsm_face
 from .llm import build_llm
@@ -113,6 +113,21 @@ def build_voice():
     return EnkiVoice()
 
 
+def launch_desktop_face():
+    """Masaüstü yüzünü (enki_masaustu.py, PySide6) Enki ile birlikte aç; hub'a kendisi bağlanır."""
+    import subprocess
+    script = ROOT / "enki_masaustu.py"
+    ok = subprocess.run([sys.executable, "-c", "import PySide6.QtWebEngineWidgets"],
+                        capture_output=True).returncode == 0
+    if not script.exists() or not ok:
+        _status("yüz", False, "(pip install PySide6 — sonra Enki'yi yeniden aç)")
+        return None
+    p = subprocess.Popen([sys.executable, str(script)], cwd=ROOT,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _status("yüz", True, "(masaüstünde; menü çubuğundaki simgeden gizle/göster)")
+    return p
+
+
 def _status(name: str, ok: bool, note: str = "") -> None:
     print(f"  {name:<11} {'açık' if ok else YELLOW + 'kapalı' + RESET} {DIM}{note}{RESET}")
 
@@ -162,6 +177,15 @@ async def amain(args) -> None:
     loop = asyncio.get_running_loop()
     if hub:
         brain.fsm.subscribe(lambda a, s, b: (f := fsm_face(a, s, b)) and loop.create_task(hub.face(f)))
+
+        def eyes_on_people(ev) -> None:  # boştayken: tanıyınca selam kırpışı, yabancıda dikkat
+            if brain.fsm.q.name != "IDLE":
+                return
+            if isinstance(ev, FaceSeen):
+                loop.create_task(hub.face("owner" if ev.who == "nehir" else "stranger"))
+            elif isinstance(ev, FaceLeft):
+                loop.create_task(hub.face("idle"))
+        brain.observers.append(eyes_on_people)
     if os.getenv("ENKI_DEBUG_FSM"):
         brain.fsm.subscribe(lambda a, s, b: print(f"{DIM}[{a.name} --{s.name}--> {b.name}]{RESET}"))
     brain.fsm.subscribe(
@@ -202,12 +226,17 @@ async def amain(args) -> None:
         except Exception as e:
             _status("kulak", False, str(e)[:120])
     _status("ses", speaks, "" if speaks else "(--sessiz ya da edge-tts yok)")
+    face_proc = None
+    if hub and not args.yuzsuz:
+        face_proc = launch_desktop_face()
 
     reader = asyncio.create_task(stdin_loop(brain, mem, speaker.interrupt))
     try:
         await brain.run()
     finally:
         reader.cancel()
+        if face_proc and face_proc.poll() is None:
+            face_proc.terminate()
         if vision:
             vision.stop()
         mem.close()
@@ -224,6 +253,7 @@ def main() -> None:
     ap.add_argument("--kayit", action="store_true", help="yüzünü öğret ve çık")
     ap.add_argument("--sifirla", action="store_true", help="--kayit/--ses-kayit ile: eski kaydı sil")
     ap.add_argument("--ses-kayit", action="store_true", help="sesini öğret ve çık")
+    ap.add_argument("--yuzsuz", action="store_true", help="masaüstü yüzünü açma")
     args = ap.parse_args()
     args.sessiz = args.sessiz or bool(os.getenv("ENKI_SESSIZ"))
     try:
