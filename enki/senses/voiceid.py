@@ -101,26 +101,39 @@ CUMLELER = [
 ]
 
 
-def enroll(seconds: float = 5.0, reset: bool = False) -> int:
-    """Terminalde 10 cümle okutur, her birinin ses imzasını kaydeder. Mevcut kayda ekler."""
+def enroll(seconds: float = 5.0, reset: bool = False, free_s: float = 30.0) -> int:
+    """Sesini öğret: cümle okuma + serbest konuşma. Okuma sesi ile doğal konuşma sesi farklı:
+    sadece cümle okutunca canlı skorlar 0.60-0.83 arasında oynadı. Serbest kısım 3 sn'lik parçalara bölünür."""
     import sounddevice as sd
 
     vid = VoiceID()
     if reset:
         vid.E = vid.E[:0]
-    print("Ses kaydı: her cümlede Enter'a bas, sonra normal sesinle oku (5 sn).")
-    print("Sessiz bir yerde ol; bir kısmını masadaki normal duruşunla, bir kısmını biraz uzaktan oku.\n")
+    print("SES KAYDI — Enki'yi kullandığın yerde, normal oturuşunla yap.\n")
+    print("1) Cümle okuma: her cümlede Enter'a bas, okuma gibi değil KONUŞUR gibi söyle (5 sn).\n")
     for i, cumle in enumerate(CUMLELER, 1):
-        input(f"[{i}/{len(CUMLELER)}] Enter → oku:  “{cumle}”")
+        input(f"[{i}/{len(CUMLELER)}] Enter → söyle:  “{cumle}”")
         rec = sd.rec(int(seconds * SR), samplerate=SR, channels=1, dtype="float32")
         sd.wait()
         e = vid.embed(rec[:, 0])
         if e is None:
-            print("   ✗ ses çok kısa/sessiz, bu cümle atlandı")
+            print("   ✗ ses çok kısa/sessiz, atlandı")
             continue
-        sim = f" (öncekilerle benzerlik {float(vid.centroid @ e):.2f})" if vid.enrolled else ""
         vid.add(e)
-        print(f"   ✓ kaydedildi{sim}")
+        print("   ✓")
+    print(f"\n2) Serbest konuşma ({free_s:.0f} sn): bugün ne yaptığını, Enki'ye ne yaptırmak istediğini anlat.")
+    print("   Sessiz kalma, durmadan konuş; arada 'Enki' de, sana normalde nasıl konuşuyorsan öyle.")
+    input("   Hazır olunca Enter → konuş")
+    rec = sd.rec(int(free_s * SR), samplerate=SR, channels=1, dtype="float32")
+    sd.wait()
+    x, step, n = rec[:, 0], int(3 * SR), 0
+    for i in range(0, len(x) - step + 1, step):
+        e = vid.embed(x[i:i + step])
+        if e is not None:
+            vid.add(e)
+            n += 1
+    print(f"   ✓ serbest konuşmadan {n} örnek")
+    sims = vid.E @ vid.centroid
     vid.save()
-    print(f"\nBitti: {len(vid.E)} örnek → {vid.path}")
+    print(f"\nBitti: {len(vid.E)} örnek. Kendi içinde benzerlik: en düşük {sims.min():.2f}, ortalama {sims.mean():.2f}")
     return len(vid.E)

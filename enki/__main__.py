@@ -267,7 +267,12 @@ async def amain(args) -> None:
             except Exception as e:
                 logging.getLogger("enki").warning("ses kimliği yok: %s", e)
             def alone_with_nehir() -> bool:
-                return bool(vision and vision.ok and "mac" in brain.present and vision.others == 0)
+                ok = bool(vision and vision.ok and "mac" in brain.present and vision.others == 0)
+                if not ok:
+                    logging.getLogger("enki.ear").info(
+                        "yalnız değil: göz=%s present=%s others=%s", bool(vision and vision.ok),
+                        sorted(brain.present), getattr(vision, "others", None))
+                return ok
             ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke, voiceid=voiceid,
                            alone_with_nehir=alone_with_nehir,
                            gaze=vision.gaze_fraction if vision else None, whisper=args.whisper,

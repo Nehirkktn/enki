@@ -72,7 +72,7 @@ class VisionSense:
         if n != self._cand_others:
             self._cand_others, self._cand_t = n, now
         elif n != self.others and now - self._cand_t >= COMPANY_S:
-            log.info("yanında başka %d kişi var" if n else "misafir gitti", n)
+            log.info("yanında başka %d kişi var", n) if n else log.info("misafir gitti")
             self.others = n
 
     def _on_event(self, ev: PEvent) -> None:

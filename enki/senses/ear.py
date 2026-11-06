@@ -133,7 +133,10 @@ class EarSense:
             return None, None
         # Füzyon: kamera odada SADECE Nehir'i görüyorsa ses skoru düşük çıksa da konuşan odur
         # (canlı mikrofonda Nehir 0.71-0.75 aldı; eşik 0.72'nin hemen altı onu misafir yapıyordu).
-        if owner is False and score is not None and score >= FUSION_MIN and self.alone_with_nehir():
+        alone = self.alone_with_nehir()
+        if owner is False and score is not None:
+            log.info("füzyon: skor %.2f, kamerada yalnız Nehir: %s", score, alone)
+        if owner is False and score is not None and score >= FUSION_MIN and alone:
             owner = True
             log.info("ses kimliği: %.2f → Nehir (kamera: odada sadece o var)", score)
         elif score is not None:
