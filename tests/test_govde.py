@@ -221,3 +221,25 @@ def test_context_mentions_guest():
     from enki import persona
     c = persona.dynamic_context([], [], datetime.now(), present=["mac"], others=1)
     assert "1 KİŞİ DAHA" in c
+
+
+# ---------------- ses kimliği (gerçek model yerine sahte encoder: ses "kimliği" = sabit yön)
+class FakeEnc:
+    def __call__(self, audio):
+        v = np.zeros(256, np.float32); v[0 if audio.mean() > 0 else 1] = 1.0
+        v[2] = 0.3
+        return v
+
+
+def test_voiceid_owner_vs_guest(tmp_path):
+    from enki.senses.voiceid import VoiceID, SR
+    vid = VoiceID(tmp_path / "s.npz", encoder=FakeEnc())
+    nehir, misafir = np.full(SR * 2, 0.1, np.float32), np.full(SR * 2, -0.1, np.float32)
+    assert vid.is_owner(nehir) == (None, None)            # kayıt yok: karar yok
+    for _ in range(3):
+        vid.add(vid.embed(nehir))
+    vid.save()
+    vid2 = VoiceID(tmp_path / "s.npz", encoder=FakeEnc())
+    assert vid2.is_owner(nehir)[0] is True
+    assert vid2.is_owner(misafir)[0] is False
+    assert vid2.is_owner(nehir[: SR // 2])[0] is None     # < 1 sn: güvenilmez

@@ -4,7 +4,8 @@
   enki --sessiz             # Enki sesli cevap vermez (ya da ENKI_SESSIZ=1)
   enki --no-cam --no-mic    # sadece klavye
   enki --no-hub             # telefon/yüz bağlantısı yok
-  python -m enki --kayit    # yüzünü öğret (kamera, ~20 sn)
+  python -m enki --kayit    # yüzünü öğret (kamera, ~30 sn)
+  python -m enki --ses-kayit  # sesini öğret (10 cümle okursun)
   /kendi <metin>            # kendi kendine konuşma simülasyonu (Overheard)
   /yuz                      # kamera seni gördü (FaceSeen)
   /gor                      # kamera şu an ne görüyor
@@ -113,7 +114,7 @@ def build_voice():
 
 
 def _status(name: str, ok: bool, note: str = "") -> None:
-    print(f"  {name:<7} {'açık' if ok else YELLOW + 'kapalı' + RESET} {DIM}{note}{RESET}")
+    print(f"  {name:<11} {'açık' if ok else YELLOW + 'kapalı' + RESET} {DIM}{note}{RESET}")
 
 
 async def amain(args) -> None:
@@ -181,13 +182,23 @@ async def amain(args) -> None:
     if not args.no_mic:
         try:
             from .senses.ear import EarSense
-            ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke,
+            voiceid = None
+            try:
+                from .senses.voiceid import VoiceID
+                voiceid = VoiceID()
+            except Exception as e:
+                logging.getLogger("enki").warning("ses kimliği yok: %s", e)
+            ear = EarSense(brain.post_threadsafe, muted, lambda: speaker.last_spoke, voiceid=voiceid,
                            gaze=vision.gaze_fraction if vision else None, whisper=args.whisper,
                            last_typed=lambda: TYPED[0], speaking=lambda: speaker.current,
                            interrupt=lambda: loop.call_soon_threadsafe(speaker.interrupt))
             print(f"  {DIM}kulak: Whisper yükleniyor…{RESET}")
             await loop.run_in_executor(None, ear.start)
             _status("kulak", True, f"{ear.stt.backend} · 'Enki' diye başla; yazarken sadece 'Enki' denince dinler")
+            if ear.voiceid is not None and ear.voiceid.enrolled:
+                _status("ses kimliği", True, f"{len(ear.voiceid.E)} örnek · eşik {ear.voiceid.threshold}")
+            else:
+                _status("ses kimliği", False, "(sesini öğret: enki_ses_kayit.command)")
         except Exception as e:
             _status("kulak", False, str(e)[:120])
     _status("ses", speaks, "" if speaks else "(--sessiz ya da edge-tts yok)")
@@ -211,10 +222,15 @@ def main() -> None:
     ap.add_argument("--kamera", default=0, type=lambda s: int(s) if s.isdigit() else s)
     ap.add_argument("--whisper", default=os.getenv("ENKI_WHISPER", "auto"), help="auto/tiny/base/small/turbo")
     ap.add_argument("--kayit", action="store_true", help="yüzünü öğret ve çık")
-    ap.add_argument("--sifirla", action="store_true", help="--kayit ile: eski yüz kaydını sil")
+    ap.add_argument("--sifirla", action="store_true", help="--kayit/--ses-kayit ile: eski kaydı sil")
+    ap.add_argument("--ses-kayit", action="store_true", help="sesini öğret ve çık")
     args = ap.parse_args()
     args.sessiz = args.sessiz or bool(os.getenv("ENKI_SESSIZ"))
     try:
+        if args.ses_kayit:
+            from .senses.voiceid import enroll as ses_enroll
+            ses_enroll(reset=args.sifirla)
+            return
         if args.kayit:
             from .senses.vision import enroll
             enroll(ROOT, args.kamera, reset=args.sifirla)

@@ -8,6 +8,8 @@ Enki konuşurken mikrofon susturulur (`muted`), yoksa kendi sesine cevap verir.
 from __future__ import annotations
 
 import logging
+
+import numpy as np
 import platform
 import re
 import threading
@@ -88,10 +90,12 @@ class EarSense:
     def __init__(self, post: Callable[[Event], None], muted: threading.Event,
                  last_spoke: Callable[[], float], gaze: Callable[[float, float], float] | None = None,
                  whisper: str = "auto", body: str = "mac", last_typed: Callable[[], float] = lambda: -1e9,
-                 speaking: Callable[[], str] = lambda: "", interrupt: Callable[[], None] = lambda: None):
+                 speaking: Callable[[], str] = lambda: "", interrupt: Callable[[], None] = lambda: None,
+                 voiceid=None):
         self.post, self.muted, self.last_spoke, self.gaze, self.body = post, muted, last_spoke, gaze, body
         self.last_typed = last_typed
         self.speaking, self.interrupt = speaking, interrupt
+        self.voiceid = voiceid  # VoiceID | None: kayıt yoksa herkes Nehir sayılır (eski davranış)
         self._called_at = -1e9
         if whisper == "auto":
             whisper = "turbo" if platform.system() == "Darwin" and platform.machine() == "arm64" else "small"
@@ -99,14 +103,32 @@ class EarSense:
         self.ok = False
 
     def start(self) -> "EarSense":
-        from .listener import Listener
+        from .listener import SR, Listener
         from .stt import Transcriber
 
         self.stt = Transcriber(self.whisper)        # ilk seferde model iner; hata burada yukarı çıkar
+        if self.voiceid is not None and self.voiceid.enrolled:
+            try:
+                self.voiceid.embed(np.zeros(SR * 2, np.float32) + 1e-4)  # modeli şimdi yükle
+            except Exception as e:
+                log.warning("ses kimliği kapalı: %s", e)
+                self.voiceid = None
         self.listener = Listener(mute_while=self.muted).start()
         self.ok = True
         threading.Thread(target=self._run, name="enki-ear", daemon=True).start()
         return self
+
+    def _who(self, audio) -> tuple[bool | None, float | None]:
+        if self.voiceid is None or not self.voiceid.enabled_for_use:
+            return None, None
+        try:
+            owner, score = self.voiceid.is_owner(audio)
+        except Exception:
+            log.exception("ses kimliği hata")
+            return None, None
+        if score is not None:
+            log.info("ses kimliği: %.2f → %s", score, "Nehir" if owner else "BAŞKASI")
+        return owner, score
 
     @property
     def hearing(self) -> bool:
@@ -133,6 +155,9 @@ class EarSense:
                 self.interrupt()
                 self._called_at = now  # sustu, dinliyor: sonraki 8 sn içindeki cümle ona
                 continue
+            owner, score = self._who(utt.audio)
+            if owner is False:
+                text = f"[MİSAFİR SESİ] {text}"  # Nehir değil: Enki misafir kurallarıyla cevaplar
             if only_name(text):
                 self._called_at = now
                 log.info("çağrıldı, cümleyi bekliyor: %s", text)
@@ -144,6 +169,6 @@ class EarSense:
                 ok, why = addressed(text, utt.t_start, utt.t_end, now, self.last_spoke(), self.gaze,
                                     last_typed=self.last_typed())
             log.info("%s (%s): %s", {True: "bana", False: "kendi kendine", None: "yok sayıldı"}[ok], why, text)
-            if ok is None:
-                continue
+            if ok is None or (ok is False and owner is False):
+                continue  # başkalarının kendi aralarındaki konuşması Enki'yi ilgilendirmez
             self.post(UserSaid(text, self.body) if ok else Overheard(text, self.body))

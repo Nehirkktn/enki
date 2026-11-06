@@ -28,3 +28,4 @@ voices/
 # Gövde anahtarı (telefon linkindeki ?k=)
 data/govde_anahtari
 data/enki.log
+data/ses_kaydi.npz
