@@ -9,6 +9,8 @@ Masaüstü Enki: ekranında her zaman üstte duran, şeffaf, sürüklenebilir k�
 Kurulum:   pip3 install PySide6 websockets
 Çalıştır:  önce beyin (yuz_koprusu.baslat() çağıran kodun), sonra:  python3 enki_masaustu.py
 Önizleme:  python3 enki_masaustu.py --demo     (beyin gerekmez; 35 saniyelik bir gösteri oynar)
+Tam ekran: menü çubuğu simgesi → "Tam ekran" · tam ekrandayken çift tık ya da Esc çıkar ·
+           ENKI_TAM_EKRAN=1 enki  (ya da --tam-ekran) Enki'yi doğrudan tam ekran açar
 """
 
 import json
@@ -19,7 +21,7 @@ import threading
 import time
 
 from PySide6.QtCore import QEasingCurve, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
@@ -75,6 +77,7 @@ class MasaustuEnki(QWidget):
         duzen.addWidget(self.gorunum)
 
         self.buyuk = False
+        self.tam = False
         self.son_hareket = time.time()
         self._surukle = None
         self.anim = QPropertyAnimation(self, b"geometry")
@@ -130,10 +133,53 @@ class MasaustuEnki(QWidget):
         self._git_geo(self._alan(), 500)
 
     def kucul(self):
-        if not self.buyuk:
+        if not self.buyuk or self.tam:
             return
         self.buyuk = False
         self._git_geo(getattr(self, "_kucuk_geo", QRect(0, 0, MINI_G, MINI_Y)), 500)
+
+    # ---------- tam ekran ----------
+    def _js(self, kod):
+        self.gorunum.page().runJavaScript(kod)
+
+    def _mac_seviye(self, ust: bool):
+        """macOS: pencereyi menü çubuğunun da üstüne çıkar (pyobjc yoksa menü çubuğu görünür kalır)."""
+        try:
+            import objc
+            import AppKit
+            pencere = objc.objc_object(c_void_p=int(self.winId())).window()
+            pencere.setLevel_(AppKit.NSMainMenuWindowLevel + 1 if ust else AppKit.NSFloatingWindowLevel)
+            return True
+        except Exception:
+            return False
+
+    def tam_ekran(self):
+        if self.tam:
+            return
+        self.anim.stop()
+        if not self.buyuk:
+            self._kucuk_geo = self.geometry()
+        self.tam = self.buyuk = True
+        ekran = self._ekran()
+        self.show()
+        self.setGeometry(ekran.geometry() if self._mac_seviye(True) else ekran.availableGeometry())
+        self._js("document.documentElement.classList.add('expanded')")
+        self.setCursor(Qt.BlankCursor)
+        self.raise_()
+        self.activateWindow()
+
+    def tam_ekrandan_cik(self):
+        if not self.tam:
+            return
+        self.tam = self.buyuk = False
+        self._mac_seviye(False)
+        self.unsetCursor()
+        self._js("document.documentElement.classList.remove('expanded')")
+        self.setGeometry(getattr(self, "_kucuk_geo", QRect(0, 0, MINI_G, MINI_Y)))
+        self.son_hareket = time.time()
+
+    def tam_ekran_degistir(self):
+        self.tam_ekrandan_cik() if self.tam else self.tam_ekran()
 
     def komut_al(self, m):
         if "enki_git" in m:
@@ -150,6 +196,10 @@ class MasaustuEnki(QWidget):
             self.kucul()
         elif mod == "imlec":
             self.imlece_gel()
+        elif mod == "tam":
+            self.tam_ekran()
+        elif mod == "tam_kapat":
+            self.tam_ekrandan_cik()
         elif mod == "kose":
             self.koseye_don()
         elif mod == "gizle":
@@ -187,6 +237,9 @@ class MasaustuEnki(QWidget):
             self._surukle = None
             self.son_hareket = time.time()
             return True
+        if t == olay.Type.MouseButtonDblClick and self.tam:
+            self.tam_ekrandan_cik()
+            return True
         if t == olay.Type.MouseButtonDblClick and not self.buyuk:
             self.koseye_don()
             return True
@@ -219,7 +272,11 @@ def main():
 
     tepsi = QSystemTrayIcon(simge(), app)
     menu = QMenu()
-    for ad, f in [("Göster", enki.show), ("Gizle", enki.hide), ("Köşeye dön", enki.koseye_don), ("İmlecin yanına gel", enki.imlece_gel)]:
+    for kisayol in ("Escape", "F"):
+        QShortcut(QKeySequence(kisayol), enki, activated=enki.tam_ekrandan_cik if kisayol == "Escape" else enki.tam_ekran_degistir)
+
+    for ad, f in [("Tam ekran", enki.tam_ekran_degistir), ("Göster", enki.show), ("Gizle", enki.hide),
+                  ("Köşeye dön", enki.koseye_don), ("İmlecin yanına gel", enki.imlece_gel)]:
         a = QAction(ad, menu)
         a.triggered.connect(f)
         menu.addAction(a)
@@ -230,6 +287,9 @@ def main():
     tepsi.setContextMenu(menu)
     tepsi.setToolTip("Enki")
     tepsi.show()
+
+    if "--tam-ekran" in sys.argv or os.environ.get("ENKI_TAM_EKRAN") == "1":
+        QTimer.singleShot(1200, enki.tam_ekran)   # yüz sayfası yüklensin, sonra büyü
 
     if "--demo" in sys.argv:
         # Beyin olmadan önizleme: Enki sırayla imlece gelir, ekranda dolaşır, büyür, küçülür ve köşesine döner
