@@ -43,4 +43,4 @@ Gövde → beyin: `{"hello": {"body": "telefon", "caps": ["face","text","speaker
 `{"said": "…"}`, `{"overheard": "…"}`, `{"seen": "nehir"}`, `{"left": "nehir"}`.
 Beyin → gövde: `{"state": …, "text": …}` (göz), `{"say": …, "audio": <base64 wav>}` (sadece konuşulan gövdeye).
 Localhost'tan gelen bağlantı anahtarsız göz ekranıdır (enki-yuz.html, enki_masaustu.py). Ağdan gelen her gövde
-`data/govde_anahtari` ile `hello` göndermek zorunda: yurt Wi-Fi'ı herkese açık.
+`data/govde_anahtari` ile `hello` göndermek zorunda: ortak Wi-Fi ağları herkese açık.

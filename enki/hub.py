@@ -14,7 +14,7 @@ Gövde → beyin                               Beyin → gövdeler
 
 Eski enki-yuz.html / enki_masaustu.py `hello` göndermez: localhost'tan gelen her bağlantı
 "yuz" adlı, sadece göz gösteren gövde sayılır → değişiklik gerekmeden çalışırlar.
-Yurt Wi-Fi'ı herkese açık: localhost dışındaki gövdeler anahtar olmadan hiçbir şey yapamaz.
+Ortak Wi-Fi ağları herkese açık: localhost dışındaki gövdeler anahtar olmadan hiçbir şey yapamaz.
 """
 from __future__ import annotations
 
@@ -145,7 +145,7 @@ class Hub:
                 except (ValueError, TypeError):
                     continue
                 if isinstance(msg, dict) and "kapat" in msg:
-                    # ağdan gelen kapatma isteği hiç denenmez: yurt Wi-Fi'ında şifre tahmini olmasın
+                    # ağdan gelen kapatma isteği hiç denenmez: ortak Wi-Fi'da şifre tahmini olmasın
                     ok = bool(local and self.on_kapat and await self.on_kapat(str(msg["kapat"])))
                     log.info("kapatma isteği (%s): %s", body.name, "doğru" if ok else "reddedildi")
                     await ws.send(json.dumps({"kapat": ok}))
